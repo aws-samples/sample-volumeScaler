@@ -36,7 +36,12 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
+          
+      - name: Install dependencies
+        run: |
+          go mod tidy
+          go mod download
 
       - name: Run tests
         run: |
-          go test -v ./cmd/... 
+          go test -v ./cmd/...
