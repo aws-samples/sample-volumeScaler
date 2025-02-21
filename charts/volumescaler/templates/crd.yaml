@@ -1,0 +1,90 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: volumescalers.autoscaling.storage.k8s.io
+spec:
+  group: autoscaling.storage.k8s.io
+  names:
+    kind: VolumeScaler
+    listKind: VolumeScalerList
+    plural: volumescalers
+    singular: volumescaler
+    shortNames:
+      - vs
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - pvcName
+                - threshold
+                - scale
+                - scaleType
+                - maxSize
+              properties:
+                pvcName:
+                  type: string
+                  description: Name of the PersistentVolumeClaim to monitor.
+                threshold:
+                  type: string
+                  pattern: "^[0-9]+%$"
+                  description: Disk usage threshold (e.g., "80%").
+                scale:
+                  type: string
+                  description: Either "2Gi" (fixed) or "30%" (percentage).
+                scaleType:
+                  type: string
+                  description: "'fixed' or 'VolumeScaler'."
+                cooldownPeriod:
+                  type: string
+                  description: "Time to wait between expansions (e.g., '10m')."
+                maxSize:
+                  type: string
+                  pattern: "^[0-9]+Gi$"
+                  description: Maximum size the PVC can scale to.
+            status:
+              type: object
+              properties:
+                scaledAt:
+                  type: string
+                  format: date-time
+                reachedMaxSize:
+                  type: boolean
+                resizeInProgress:
+                  type: boolean
+                lastRequestedSize:
+                  type: string
+
+      additionalPrinterColumns:
+        - name: PVC Name
+          type: string
+          jsonPath: .spec.pvcName
+        - name: Threshold
+          type: string
+          jsonPath: .spec.threshold
+        - name: Scale
+          type: string
+          jsonPath: .spec.scale
+        - name: ScaleType
+          type: string
+          jsonPath: .spec.scaleType
+        - name: Max Size
+          type: string
+          jsonPath: .spec.maxSize
+        - name: Scaled At
+          type: string
+          jsonPath: .status.scaledAt
+        - name: Reached Max Size
+          type: boolean
+          jsonPath: .status.reachedMaxSize
+      subresources:
+        status: {}

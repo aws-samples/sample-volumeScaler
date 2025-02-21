@@ -1,0 +1,35 @@
+{{- if .Values.rbac.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.rbac.serviceAccountName }}
+  namespace: {{ .Values.daemonset.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pvc-resizer-role
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "persistentvolumeclaims", "persistentvolumes", "events"]
+    verbs: ["get", "list", "watch", "patch", "create"]
+  - apiGroups: ["autoscaling.storage.k8s.io"]
+    resources: ["volumescalers", "volumescalers/status"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pvc-resizer-rolebinding
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.rbac.serviceAccountName }}
+    namespace: {{ .Values.daemonset.namespace }}
+roleRef:
+  kind: ClusterRole
+  name: pvc-resizer-role
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

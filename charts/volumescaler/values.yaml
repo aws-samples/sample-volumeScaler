@@ -1,0 +1,32 @@
+# Default values for VolumeScaler chart
+
+image:
+  repository: public.ecr.aws/ghanem/volumescaler
+  tag: v0.1.0        # Use a semantic version or "latest"
+  pullPolicy: Always
+
+rbac:
+  create: true       # If you want optional toggling of RBAC creation
+  serviceAccountName: pvc-resizer
+
+daemonset:
+  name: volumescaler-daemonset
+  namespace: default
+  labels: {}
+  nodeSelector: {}
+  tolerations: []
+  priorityClassName: system-node-critical
+
+# Resources for container
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+pvcResizerEnv: []  # Additional environment variables if needed
+
+# If you want to use a different "path" for the kubelet
+kubeletHostPath: /var/lib/kubelet
