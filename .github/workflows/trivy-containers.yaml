@@ -21,9 +21,7 @@ jobs:
       - id: set-matrix
         uses: mikefarah/yq@v4
         with:
-          # Dynamically build the matrix of images to scan
-          cmd: "yq '[{\"repository\": .image.repository, \"tag\": \"v'$(yq '.appVersion' charts/volumescaler/Chart.yaml)'\"}] + (.sidecars | map(.image)) | map(.repository + \":\" + .tag) | . style=\"flow\"' charts/volumescaler/values.yaml"
-  
+          cmd: "yq -o=json '[{\"repository\": .image.repository, \"tag\": \"v'$(yq '.appVersion' charts/volumescaler/Chart.yaml)'\"}] + (.sidecars | map(.image)) | map(.repository + \":\" + .tag)' charts/volumescaler/values.yaml"
   trivy-scan:
     needs: build-matrix
     runs-on: ubuntu-latest
