@@ -1,0 +1,57 @@
+flowchart TD
+    A[Start VolumeScaler Operator]
+    B[Initialize Kubernetes Clients & Recorder]
+    C[Load Kubernetes Configuration - inClusterOrKubeconfig]
+    D[Enter mainLoop]
+    
+    E[Discover Local PVC Mounts - getPVCUIDsFromLocalMounts]
+    F[List All Cluster PVCs]
+    G[List VolumeScaler CRs]
+    
+    H[For Each PVC with an Associated VolumeScaler]
+    I[Parse VolumeScaler Spec Fields - Threshold, Scale, MaxSize]
+    J[Convert PVC and CR Sizes to GiB]
+    K[Measure Disk Usage via df - measureUsage]
+    
+    L{Has PVC reached Max Size?}
+    M{Is a Resize Operation In Progress?}
+    N{Resize Completed?}
+    O{Usage exceeds Threshold?}
+    
+    P[Calculate New Size using Current Size and Scale Percentage]
+    Q[Cap New Size at Maximum Allowed Size if Needed]
+    R[Patch PVC Spec to Request New Size]
+    S[Update VolumeScaler Status with resizeInProgress, scaledAt, lastRequestedSize, and reachedMaxSize]
+    
+    T[Emit Events for Each Significant Action or Error]
+    U[Sleep for 60 Seconds]
+    V[Repeat mainLoop]
+    
+    %% Flow connections
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    G --> H
+    H --> I
+    I --> J
+    J --> K
+    K --> L
+    
+    L -- Yes --> T
+    L -- No --> M
+    M -- Yes --> N
+    N -- Completed --> S
+    N -- Still in progress --> T
+    M -- No --> O
+    O -- asdfasdf --> P
+    P --> Q
+    Q --> R
+    R --> T
+    O -- Usage low --> T
+    
+    T --> U
+    U --> V
+    V --> D

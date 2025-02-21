@@ -1,0 +1,76 @@
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: test-pv
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  # storageClassName: ebs-sc
+  storageClassName: ebs # ALLOWVOLUMEEXPANSION=false
+  csi:
+    driver: ebs.csi.aws.com
+    fsType: ext4
+    volumeHandle: vol-xxxxxxxxxxxxxxxxx
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-ebs-claim
+  namespace: ghanem
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # storageClassName: ebs-sc
+  storageClassName: ebs  # ALLOWVOLUMEEXPANSION=false
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: zghanem.aws/v1
+kind: VolumeScaler
+metadata:
+  name: test-ebs-claim
+  namespace: ghanem
+spec:
+  pvcName: test-ebs-claim
+  threshold: "70%"
+  scale: "30%"
+  maxSize: 6Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-data-generator
+  namespace: ghanem
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-data-generator
+  template:
+    metadata:
+      labels:
+        app: test-data-generator
+    spec:
+      containers:
+        - name: data-generator
+          image: busybox
+          command:
+            - /bin/sh
+            - -c
+            - |
+              while true; do
+                echo "Generating data for test-ebs-claim..."
+                dd if=/dev/urandom of=/data/new-file-$(date +%s).txt bs=1M count=50 2>/dev/null
+                sleep 2
+              done
+          volumeMounts:
+            - name: data-volume
+              mountPath: /data
+      volumes:
+        - name: data-volume
+          persistentVolumeClaim:
+            claimName: test-ebs-claim

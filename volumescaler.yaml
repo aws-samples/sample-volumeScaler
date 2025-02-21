@@ -1,0 +1,174 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  # Changed name to reflect "volumescalers.autoscaling.storage.k8s.io"
+  name: volumescalers.autoscaling.storage.k8s.io
+spec:
+  # Changed group to autoscaling.storage.k8s.io
+  group: autoscaling.storage.k8s.io
+  names:
+    kind: VolumeScaler
+    listKind: VolumeScalerList
+    plural: volumescalers
+    singular: volumescaler
+    shortNames:
+      - vs
+  scope: Namespaced
+  versions:
+    - name: v1alpha1               # first release -> v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - pvcName
+                - threshold
+                - scale
+                - scaleType
+                - maxSize
+              properties:
+                pvcName:
+                  type: string
+                  description: Name of the PersistentVolumeClaim to monitor.
+                threshold:
+                  type: string
+                  pattern: "^[0-9]+%$"
+                  description: Disk usage threshold (e.g., "80%").
+                scale:
+                  type: string
+                  description: Either "2Gi" (fixed) or "30%" (percentage).
+                scaleType:
+                  type: string
+                  description: "'fixed' or 'VolumeScaler'."
+                cooldownPeriod:
+                  type: string
+                  description: "Time to wait between expansions (e.g., '10m')."
+                maxSize:
+                  type: string
+                  pattern: "^[0-9]+Gi$"
+                  description: Maximum size the PVC can scale to.
+            status:
+              type: object
+              properties:
+                scaledAt:
+                  type: string
+                  format: date-time
+                reachedMaxSize:
+                  type: boolean
+                resizeInProgress:
+                  type: boolean
+                lastRequestedSize:
+                  type: string
+
+      additionalPrinterColumns:
+        - name: PVC Name
+          type: string
+          jsonPath: .spec.pvcName
+        - name: Threshold
+          type: string
+          jsonPath: .spec.threshold
+        - name: Scale
+          type: string
+          jsonPath: .spec.scale
+        - name: ScaleType
+          type: string
+          jsonPath: .spec.scaleType
+        - name: Max Size
+          type: string
+          jsonPath: .spec.maxSize
+        - name: Scaled At
+          type: string
+          jsonPath: .status.scaledAt
+        - name: Reached Max Size
+          type: boolean
+          jsonPath: .status.reachedMaxSize
+      subresources:
+        status: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pvc-resizer
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pvc-resizer-role
+rules:
+  - apiGroups: [""]  # Core API group
+    resources: ["pods", "persistentvolumeclaims", "persistentvolumes", "events"]
+    verbs: ["get", "list", "watch", "patch", "create"]
+  - # Updated to new group
+    apiGroups: ["autoscaling.storage.k8s.io"]  
+    resources: ["volumescalers", "volumescalers/status"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["storage.k8s.io"]  # For StorageClasses
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pvc-resizer-rolebinding
+subjects:
+  - kind: ServiceAccount
+    name: pvc-resizer
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: pvc-resizer-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: volumescaler-daemonset
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: volumescaler
+  template:
+    metadata:
+      labels:
+        app: volumescaler
+    spec:
+      serviceAccountName: pvc-resizer
+      containers:
+        - name: pvc-resizer
+          # Example referencing a semantic version, e.g. v0.1.0
+          image: public.ecr.aws/ghanem/volumescaler:v0.1.0
+          imagePullPolicy: Always
+          env:
+            - name: NODE_NAME_ENV
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            privileged: true
+            readOnlyRootFilesystem: false
+            allowPrivilegeEscalation: true
+          volumeMounts:
+            - name: kubelet
+              mountPath: /var/lib/kubelet
+              mountPropagation: Bidirectional
+      volumes:
+        - name: kubelet
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+      dnsPolicy: ClusterFirst
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+        - operator: Exists
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      priorityClassName: system-node-critical
