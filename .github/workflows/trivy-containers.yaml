@@ -21,7 +21,14 @@ jobs:
       - id: set-matrix
         uses: mikefarah/yq@v4
         with:
-          cmd: "yq -o=json '[{\"repository\": .image.repository, \"tag\": \"v'$(yq '.appVersion' charts/volumescaler/Chart.yaml)'\"}] + (.sidecars | map(.image)) | map(.repository + \":\" + .tag)' charts/volumescaler/values.yaml"
+          cmd: |
+            appVersion=$(yq '.appVersion' charts/volumescaler/Chart.yaml)
+            yq --arg av "v$appVersion" '
+              [{"repository": .image.repository, "tag": $av}] +
+              (.sidecars // [] | map(.image)) |
+              map(.repository + ":" + .tag)
+            ' charts/volumescaler/values.yaml -o=json
+            
   trivy-scan:
     needs: build-matrix
     runs-on: ubuntu-latest
