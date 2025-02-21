@@ -42,4 +42,4 @@ jobs:
             ## CHANGELOG
             See [CHANGELOG](https://github.com/zghanem/volumescaler/blob/master/CHANGELOG.md) for full list of changes
           draft: true
-          prerelease: false
+          prerelease: true
