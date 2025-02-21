@@ -1,0 +1,3 @@
+
+
+release-name-template: "helm-chart-{{ .Name }}-{{ .Version }}"
