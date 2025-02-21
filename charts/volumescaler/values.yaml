@@ -2,7 +2,7 @@
 
 image:
   repository: public.ecr.aws/ghanem/volumescaler
-  tag: v0.1.1       # Use a semantic version or "latest"
+  tag: ""      # Use a semantic version or "latest"
   pullPolicy: Always
 
 rbac:
@@ -28,5 +28,5 @@ resources:
 
 pvcResizerEnv: []  # Additional environment variables if needed
 
-# If you want to use a different "path" for the kubelet
+# 
 kubeletHostPath: /var/lib/kubelet
