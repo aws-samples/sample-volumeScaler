@@ -17,6 +17,8 @@ daemonset:
   tolerations: []
   priorityClassName: system-node-critical
 
+sidecars: []  # Additional sidecars if needed
+
 # Resources for container
 resources:
   limits:
