@@ -2,7 +2,7 @@
 
 image:
   repository: public.ecr.aws/ghanem/volumescaler
-  tag: v0.1.0        # Use a semantic version or "latest"
+  tag: v0.1.01       # Use a semantic version or "latest"
   pullPolicy: Always
 
 rbac:
