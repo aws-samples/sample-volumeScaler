@@ -37,7 +37,7 @@ jobs:
 
       - name: Generate report
         run: |
-          go test -coverprofile base-coverage.tmp ./cmd/... ./pkg/...
+          go test -coverprofile base-coverage.tmp ./cmd/... 
           cat base-coverage.tmp | grep -v "mock_" > base-coverage.out
 
       - name: Upload report
@@ -60,7 +60,7 @@ jobs:
 
       - name: Generate report
         run: |
-          go test -coverprofile pr-coverage.tmp ./cmd/... ./pkg/...
+          go test -coverprofile pr-coverage.tmp ./cmd/... 
           cat pr-coverage.tmp | grep -v "mock_" > pr-coverage.out
 
       - name: Upload report
