@@ -22,13 +22,21 @@ jobs:
         uses: mikefarah/yq@v4
         with:
           cmd: |
-            appVersion=$(yq '.appVersion' charts/volumescaler/Chart.yaml)
-            yq --arg av "v$appVersion" '
-              [{"repository": .image.repository, "tag": $av}] +
-              (.sidecars // [] | map(.image)) |
-              map(.repository + ":" + .tag)
-            ' charts/volumescaler/values.yaml -o=json
-            
+            yq '
+              # Build main container
+              [{"repository": .image.repository,
+                "tag": ( if .image.tag == "" then
+                           "v'"'$(yq e .appVersion charts/volumescaler/Chart.yaml)'" 
+                         else
+                           .image.tag
+                         end
+                       )}]
+              +
+              # Append sidecars if they exist, or empty array if not
+              ((.sidecars? // []) | map(.image))
+              | map(.repository + ":" + .tag)
+              | . style="flow"
+            ' charts/volumescaler/values.yaml
   trivy-scan:
     needs: build-matrix
     runs-on: ubuntu-latest
