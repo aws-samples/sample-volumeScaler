@@ -28,7 +28,8 @@ jobs:
           echo "result=$MATRIX" >> $GITHUB_OUTPUT
 
       - name: Debug Matrix Output
-        run: echo "Images: ${{ steps.set-matrix.outputs.result }}"
+        run: |
+          echo "Images: ${{ steps.set-matrix.outputs.result }}"
 
   trivy-scan:
     needs: build-matrix
