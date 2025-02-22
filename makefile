@@ -108,14 +108,14 @@ image:
 		-f Dockerfile \
 		.
 
-# (Old approach) Build multi-arch images for all OS/ARCH combos individually
+# Build multi-arch images for all OS/ARCH combos individually
 .PHONY: all-image
 all-image: $(addprefix sub-image-,$(ALL_OS_ARCH_OSVERSION))
 
 sub-image-%:
 	$(MAKE) OS=$(call word-hyphen,$*,1) ARCH=$(call word-hyphen,$*,2) OSVERSION=$(call word-hyphen,$*,3) buildx-image
 
-# The actual build for each OS/ARCH/OSVERSION
+# The actual build for each OS/ARCH/OSVERSION using --push
 .PHONY: buildx-image
 buildx-image:
 	@echo "Building Docker image for platform=$(OS)/$(ARCH), OSVERSION=$(OSVERSION), tag=$(TAG)..."
@@ -142,7 +142,8 @@ multiarch-image:
 		--build-arg COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
 		-f Dockerfile \
-		--push
+		--push \
+		.
 
 # Create & push a Docker manifest that references each OS/ARCH tag under a single $(TAG)
 .PHONY: create-manifest
