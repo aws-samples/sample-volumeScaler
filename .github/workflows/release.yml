@@ -41,9 +41,19 @@ jobs:
           # Here we assume you have stored the output of `aws ecr-public get-login-password`
           # in a secret named AWS_ECR_PUBLIC_PASSWORD.
           password: ${{ secrets.AWS_ECR_PUBLIC_PASSWORD }}
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          
+      - name: Install dependencies
+        run: |
+          go mod tidy
+          go mod download
 
-      - name: Run unit tests
-        run: make test
+      - name: Run tests
+        run: |
+          go test -v ./cmd/...
 
       - name: Build & push multi-arch images and manifest
         run: make release
