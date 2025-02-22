@@ -14,8 +14,11 @@ RUN go mod tidy
 # Build the binary, explicitly referencing the cmd/ directory
 RUN CGO_ENABLED=0 go build -o volumescaler ./cmd
 
+# Debug: list the files in /app to verify the binary exists
+RUN ls -l /app
+
 FROM alpine:3.17
 WORKDIR /app
-COPY --from=builder /app/volumescaler .
+COPY --from=builder /app/volumescaler /app/volumescaler
 RUN chmod +x /app/volumescaler
 ENTRYPOINT ["./volumescaler"]
