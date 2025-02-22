@@ -12,11 +12,10 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/dynamic"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -24,32 +23,25 @@ import (
 )
 
 // -----------------------------------------------------------------------------
-// 1) VolumeScaler CR struct (updated group/version: autoscaling.storage.k8s.io / v1alpha1)
+// Annotation keys to define the "scaling" configuration
+// Renamed to follow "volumescaler.autoscaling.storage.k8s.io/" group convention
 // -----------------------------------------------------------------------------
-type VolumeScaler struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
+const (
+	annotationThreshold = "volumescaler.autoscaling.storage.k8s.io/threshold"      // e.g. "70%"
+	annotationScale     = "volumescaler.autoscaling.storage.k8s.io/scale"          // e.g. "2Gi" or "30%"
+	annotationScaleType = "volumescaler.autoscaling.storage.k8s.io/scaleType"      // e.g. "fixed" or "percentage"
+	annotationCooldown  = "volumescaler.autoscaling.storage.k8s.io/cooldownPeriod" // e.g. "10m", "1h"
+	annotationMaxSize   = "volumescaler.autoscaling.storage.k8s.io/maxSize"        // e.g. "20Gi"
 
-	Spec struct {
-		PVCName        string `json:"pvcName"`
-		Threshold      string `json:"threshold"`      // e.g., "70%"
-		Scale          string `json:"scale"`          // e.g., "2Gi" or "30%"
-		ScaleType      string `json:"scaleType"`      // "fixed" or "percentage"
-		CooldownPeriod string `json:"cooldownPeriod"` // e.g. "10m"
-		MaxSize        string `json:"maxSize"`        // e.g., "15Gi"
-	} `json:"spec"`
+	// "Status" annotations that the controller sets/updates
+	annotationScaledAt         = "volumescaler.autoscaling.storage.k8s.io/scaledAt"
+	annotationResizeInProgress = "volumescaler.autoscaling.storage.k8s.io/resizeInProgress"
+	annotationReachedMax       = "volumescaler.autoscaling.storage.k8s.io/reachedMaxSize"
+)
 
-	Status struct {
-		ScaledAt          string `json:"scaledAt,omitempty"`
-		ReachedMaxSize    bool   `json:"reachedMaxSize,omitempty"`
-		ResizeInProgress  bool   `json:"resizeInProgress,omitempty"`
-		LastRequestedSize string `json:"lastRequestedSize,omitempty"`
-	} `json:"status,omitempty"`
-}
-
-// -------------------------------------
-// 2) convertToGi: converts "5Gi" / "512Mi" / "1Ti" into float64 Gi
-// -------------------------------------
+// -----------------------------------------------------------------------------
+// convertToGi: converts e.g. "5Gi", "512Mi", or "1Ti" into float64 Gi
+// -----------------------------------------------------------------------------
 func convertToGi(sizeStr string) (float64, error) {
 	var numberStr, unitStr string
 	for i, r := range sizeStr {
@@ -59,15 +51,16 @@ func convertToGi(sizeStr string) (float64, error) {
 			break
 		}
 	}
-	// If we never encountered a letter, treat entire string as Gi
 	if numberStr == "" && unitStr == "" {
 		numberStr = sizeStr
 		unitStr = "Gi"
 	}
+
 	val, err := strconv.ParseFloat(numberStr, 64)
 	if err != nil {
 		return 0, err
 	}
+
 	switch unitStr {
 	case "Gi":
 		return val, nil
@@ -76,36 +69,40 @@ func convertToGi(sizeStr string) (float64, error) {
 	case "Ti":
 		return val * 1024, nil
 	default:
-		// Not recognized => interpret as Gi
+		// unknown => treat as Gi
 		return val, nil
 	}
 }
 
-// -------------------------------------
-// 3) inClusterOrKubeconfig: tries in-cluster config first, fallback to KUBECONFIG
-// -------------------------------------
+// -----------------------------------------------------------------------------
+// inClusterOrKubeconfig: tries in-cluster config first, then KUBECONFIG
+// -----------------------------------------------------------------------------
 func inClusterOrKubeconfig() (*rest.Config, error) {
-	kubeconfig := os.Getenv("KUBECONFIG")
-	if kubeconfig == "" {
-		return rest.InClusterConfig()
+	if kubeconfig := os.Getenv("KUBECONFIG"); kubeconfig != "" {
+		return clientcmd.BuildConfigFromFlags("", kubeconfig)
 	}
-	return clientcmd.BuildConfigFromFlags("", kubeconfig)
+	return rest.InClusterConfig()
 }
 
-// ------------------------------------------------------
-// 4) getPVCUIDsFromLocalMounts: returns slice of PVC UIDs + map PVC UID -> mountPath
-// ------------------------------------------------------
+// -----------------------------------------------------------------------------
+// getPVCUIDsFromLocalMounts: returns slice of PVC UIDs + map PVC UID -> mountPath
+// -----------------------------------------------------------------------------
 func getPVCUIDsFromLocalMounts(kubeletPodsPath string, clientset kubernetes.Interface) ([]types.UID, map[types.UID]string) {
 	pvcUIDSet := make(map[types.UID]struct{})
 	pvcUIDToMount := make(map[types.UID]string)
 
-	filepath.Walk(kubeletPodsPath, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(kubeletPodsPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
-		if info.IsDir() && info.Name() == "mount" && strings.Contains(path, filepath.Join("volumes", "kubernetes.io~csi")) {
-			volumeDir := filepath.Base(filepath.Dir(path)) // e.g. "pvc-<uid>" or the actual PV name
+		// Looking for subdirs named "mount" under CSI volumes
+		if info.IsDir() && info.Name() == "mount" &&
+			strings.Contains(path, filepath.Join("volumes", "kubernetes.io~csi")) {
+
+			volumeDir := filepath.Base(filepath.Dir(path)) // e.g. "pvc-<uid>" or the PV name
+
 			if strings.HasPrefix(volumeDir, "pvc-") {
+				// name is "pvc-<UID>"
 				pvcUIDStr := strings.TrimPrefix(volumeDir, "pvc-")
 				if pvcUIDStr != "" {
 					uid := types.UID(pvcUIDStr)
@@ -113,7 +110,7 @@ func getPVCUIDsFromLocalMounts(kubeletPodsPath string, clientset kubernetes.Inte
 					pvcUIDToMount[uid] = path
 				}
 			} else {
-				// Possibly the PV name. Attempt to find the claimRef UID
+				// Possibly the PV name
 				pv, err := clientset.CoreV1().PersistentVolumes().Get(context.TODO(), volumeDir, metav1.GetOptions{})
 				if err != nil {
 					fmt.Printf("[WARN] Could not get PV '%s': %v\n", volumeDir, err)
@@ -136,9 +133,9 @@ func getPVCUIDsFromLocalMounts(kubeletPodsPath string, clientset kubernetes.Inte
 	return pvcUIDs, pvcUIDToMount
 }
 
-// ---------------------------------------------
-// 5) measureUsage: runs "df" -> usage% and usedGi
-// ---------------------------------------------
+// -----------------------------------------------------------------------------
+// measureUsage: runs "df" on the mountPath -> usage% and usedGi
+// -----------------------------------------------------------------------------
 func measureUsage(mountPath string, specSizeGi float64) (int, int, error) {
 	if _, err := os.Stat(mountPath); os.IsNotExist(err) {
 		return -1, -1, fmt.Errorf("mount path '%s' not found", mountPath)
@@ -155,62 +152,23 @@ func measureUsage(mountPath string, specSizeGi float64) (int, int, error) {
 	if len(fields) < 4 {
 		return -1, -1, fmt.Errorf("df output not as expected: %v", fields)
 	}
-	usedBlocksStr := fields[2] // "Used" column
+
+	usedBlocksStr := fields[2] // The "Used" column
 	usedBlocks, err := strconv.ParseFloat(usedBlocksStr, 64)
 	if err != nil {
 		return -1, -1, err
 	}
-	// Usually df blocksize is 1K => usedBlocks => usedKB
-	usedGi := usedBlocks / (1024.0 * 1024.0)
-	usagePercent := int((usedGi / specSizeGi) * 100)
-	return usagePercent, int(usedGi + 0.5), nil
+
+	// Typically df blocksize is 1K => usedBlocks => usedKB
+	usedGiFloat := usedBlocks / (1024.0 * 1024.0)
+	usagePercent := int((usedGiFloat / specSizeGi) * 100)
+	usedGi := int(usedGiFloat + 0.5) // round
+	return usagePercent, usedGi, nil
 }
 
-// -------------------------------------------------------------
-// 6) checkAndHandleResizeFailedEvents:
-// Looks for warnings with reason="VolumeResizeFailed"
-// -------------------------------------------------------------
-func checkAndHandleResizeFailedEvents(ctx context.Context, clientset kubernetes.Interface, pvcName, pvcNamespace string) string {
-	fieldSelector := fmt.Sprintf("involvedObject.kind=PersistentVolumeClaim,involvedObject.name=%s", pvcName)
-	evList, err := clientset.CoreV1().Events(pvcNamespace).List(ctx, metav1.ListOptions{FieldSelector: fieldSelector})
-	if err != nil {
-		fmt.Printf("[ERROR] listing events for PVC '%s/%s': %v\n", pvcNamespace, pvcName, err)
-		return ""
-	}
-	var latestMsg string
-	var latestTime time.Time
-	for _, ev := range evList.Items {
-		if ev.Type == corev1.EventTypeWarning && ev.Reason == "VolumeResizeFailed" {
-			t := ev.LastTimestamp.Time
-			if t.IsZero() {
-				t = ev.CreationTimestamp.Time
-			}
-			if t.After(latestTime) {
-				latestTime = t
-				latestMsg = ev.Message
-			}
-		}
-	}
-	latestMsg = strings.ReplaceAll(latestMsg, "(MISSING)", "")
-	return strings.TrimSpace(latestMsg)
-}
-
-// ------------------------------------------------------------
-// 7) makeInvolvedObjectRef -> so events appear on the CR
-// ------------------------------------------------------------
-func makeInvolvedObjectRef(vsName types.NamespacedName, vsObj *VolumeScaler) *corev1.ObjectReference {
-	return &corev1.ObjectReference{
-		APIVersion: vsObj.APIVersion,
-		Kind:       vsObj.Kind,
-		Namespace:  vsName.Namespace,
-		Name:       vsName.Name,
-		UID:        vsObj.UID,
-	}
-}
-
-// ------------------------------------------------------------
-// helper: parseCooldownDuration
-// ------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// parseCooldownDuration: returns 0 if empty
+// -----------------------------------------------------------------------------
 func parseCooldownDuration(cooldownStr string) (time.Duration, error) {
 	if cooldownStr == "" {
 		return 0, nil
@@ -218,14 +176,15 @@ func parseCooldownDuration(cooldownStr string) (time.Duration, error) {
 	return time.ParseDuration(cooldownStr)
 }
 
-// ------------------------------------------------------------
-// helper: canScaleNow
-// ------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// canScaleNow: checks if lastScaledAt + cooldown <= now
+// -----------------------------------------------------------------------------
 func canScaleNow(lastScaledAtStr string, cooldown time.Duration) (bool, error) {
 	if cooldown == 0 {
 		return true, nil
 	}
 	if lastScaledAtStr == "" {
+		// never scaled
 		return true, nil
 	}
 	t, err := time.Parse(time.RFC3339, lastScaledAtStr)
@@ -238,43 +197,65 @@ func canScaleNow(lastScaledAtStr string, cooldown time.Duration) (bool, error) {
 	return true, nil
 }
 
-// ------------------------------------------------------------
-// helper: computeNewSize
-// ------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// computeNewSize:
+//   if scaleType="fixed" => add Gi
+//   if scaleType="percentage" => add that %
+// -----------------------------------------------------------------------------
 func computeNewSize(scale, scaleType string, currentSizeGi float64) (float64, error) {
 	switch scaleType {
 	case "fixed":
-		// e.g., "2Gi"
+		// e.g. "2Gi"
 		fixedInc, err := convertToGi(scale)
 		if err != nil {
 			return 0, fmt.Errorf("invalid fixed scale '%s': %v", scale, err)
 		}
 		return currentSizeGi + fixedInc, nil
-	case "VolumeScaler":
-		// e.g., "30%"
+
+	case "percentage":
+		// e.g. "30%"
 		scaleStr := strings.TrimSuffix(scale, "%")
 		scaleF, err := strconv.ParseFloat(scaleStr, 64)
 		if err != nil {
-			return 0, fmt.Errorf("invalid VolumeScaler scale '%s': %v", scale, err)
+			return 0, fmt.Errorf("invalid percentage scale '%s': %v", scale, err)
 		}
 		inc := currentSizeGi * (scaleF / 100.0)
 		return currentSizeGi + inc, nil
+
 	default:
-		// If not recognized, treat as percentage
+		// fallback => interpret as percentage
 		scaleStr := strings.TrimSuffix(scale, "%")
 		scaleF, err := strconv.ParseFloat(scaleStr, 64)
 		if err != nil {
-			return 0, fmt.Errorf("unknown scaleType '%s' on scale '%s': %v", scaleType, scale, err)
+			return 0, fmt.Errorf("unknown scaleType '%s' and parse failure on '%s': %v", scaleType, scale, err)
 		}
 		inc := currentSizeGi * (scaleF / 100.0)
 		return currentSizeGi + inc, nil
 	}
 }
 
-// ----------------------------------------------------
-// 8) mainLoop
-// ----------------------------------------------------
-func mainLoop(clientset *kubernetes.Clientset, dynClient dynamic.Interface, recorder record.EventRecorder, gvr schema.GroupVersionResource) {
+// -----------------------------------------------------------------------------
+// updatePVCAnnotation updates a single annotation key in a PVC via PATCH
+// -----------------------------------------------------------------------------
+func updatePVCAnnotation(ctx context.Context, clientset *kubernetes.Clientset, pvc *corev1.PersistentVolumeClaim, key, value string) {
+	if pvc.Annotations == nil {
+		pvc.Annotations = make(map[string]string)
+	}
+	pvc.Annotations[key] = value
+	patchData := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":"%s"}}}`, key, value))
+	_, err := clientset.CoreV1().PersistentVolumeClaims(pvc.Namespace).Patch(
+		ctx, pvc.Name, types.MergePatchType, patchData, metav1.PatchOptions{},
+	)
+	if err != nil {
+		fmt.Printf("[ERROR] Patching PVC annotation '%s=%s' for %s/%s failed: %v\n",
+			key, value, pvc.Namespace, pvc.Name, err)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// mainLoop
+// -----------------------------------------------------------------------------
+func mainLoop(clientset *kubernetes.Clientset, recorder record.EventRecorder) {
 	for {
 		ctx := context.Background()
 
@@ -286,7 +267,7 @@ func mainLoop(clientset *kubernetes.Clientset, dynClient dynamic.Interface, reco
 			continue
 		}
 
-		// (B) list all PVCs in cluster
+		// (B) list all PVCs in the cluster
 		allPVCs, err := clientset.CoreV1().PersistentVolumeClaims("").List(ctx, metav1.ListOptions{})
 		if err != nil {
 			fmt.Printf("[ERROR] listing PVCs: %v\n", err)
@@ -295,257 +276,215 @@ func mainLoop(clientset *kubernetes.Clientset, dynClient dynamic.Interface, reco
 		}
 		pvcMap := make(map[types.UID]*corev1.PersistentVolumeClaim, len(allPVCs.Items))
 		for i := range allPVCs.Items {
-			pvc := &allPVCs.Items[i]
-			pvcMap[pvc.UID] = pvc
+			p := &allPVCs.Items[i]
+			pvcMap[p.UID] = p
 		}
 
-		// (C) list all VolumeScalers
-		vsList, err := dynClient.Resource(gvr).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			fmt.Printf("[ERROR] listing VolumeScalers: %v\n", err)
-		}
-		vsMap := make(map[string]*VolumeScaler)
-		vsUnstructMap := make(map[string]types.NamespacedName)
-		if vsList != nil && len(vsList.Items) > 0 {
-			for _, unstr := range vsList.Items {
-				vsObj := &VolumeScaler{}
-				err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstr.Object, vsObj)
-				if err != nil {
-					fmt.Printf("[ERROR] converting VolumeScaler: %v\n", err)
-					continue
-				}
-				key := unstr.GetNamespace() + "/" + vsObj.Spec.PVCName
-				vsMap[key] = vsObj
-				vsUnstructMap[key] = types.NamespacedName{
-					Namespace: unstr.GetNamespace(),
-					Name:      unstr.GetName(),
-				}
-			}
-		}
-
-		// (D) process each PVC that has an associated VolumeScaler
+		// (C) process each PVC that is on this node
 		for _, uid := range pvcUIDs {
 			pvc, ok := pvcMap[uid]
 			if !ok {
 				continue
 			}
-			ns := pvc.Namespace
-			pvcName := pvc.Name
-			vsKey := ns + "/" + pvcName
-
-			vsObj, hasScaler := vsMap[vsKey]
-			if !hasScaler {
+			ann := pvc.Annotations
+			if ann == nil {
 				continue
 			}
 
-			invRef := makeInvolvedObjectRef(vsUnstructMap[vsKey], vsObj)
+			thresholdStr := ann[annotationThreshold] // e.g. "70%"
+			scaleStr := ann[annotationScale]         // e.g. "2Gi" or "30%"
+			scaleType := ann[annotationScaleType]    // e.g. "fixed" or "percentage"
+			cooldownStr := ann[annotationCooldown]   // e.g. "10m"
+			maxSizeStr := ann[annotationMaxSize]     // e.g. "20Gi"
 
-			// 1) parse threshold
-			thresholdF, err := strconv.ParseFloat(strings.TrimSuffix(vsObj.Spec.Threshold, "%"), 64)
+			// Must have at least threshold & scale
+			if thresholdStr == "" || scaleStr == "" {
+				continue
+			}
+
+			// parse threshold
+			thresholdF, err := strconv.ParseFloat(strings.TrimSuffix(thresholdStr, "%"), 64)
 			if err != nil {
-				recorder.Eventf(invRef, corev1.EventTypeWarning, "InvalidThreshold",
-					"Threshold '%s' invalid: %v", vsObj.Spec.Threshold, err)
+				msg := fmt.Sprintf("Invalid threshold annotation '%s': %v", thresholdStr, err)
+				recorder.Eventf(pvc, corev1.EventTypeWarning, "InvalidThreshold", msg)
 				continue
 			}
 
-			// 2) parse maxSize
-			maxSizeGi, err := convertToGi(vsObj.Spec.MaxSize)
-			if err != nil {
-				recorder.Eventf(invRef, corev1.EventTypeWarning, "InvalidMaxSize",
-					"MaxSize '%s' invalid: %v", vsObj.Spec.MaxSize, err)
-				continue
+			// parse maxSize (if present)
+			var maxSizeGi float64
+			if maxSizeStr != "" {
+				maxSizeGi, err = convertToGi(maxSizeStr)
+				if err != nil {
+					msg := fmt.Sprintf("Invalid maxSize annotation '%s': %v", maxSizeStr, err)
+					recorder.Eventf(pvc, corev1.EventTypeWarning, "InvalidMaxSize", msg)
+					continue
+				}
 			}
 
-			// 3) parse current spec & status sizes
+			// parse current spec & status sizes
 			specSizeGi, _ := convertToGi(pvc.Spec.Resources.Requests.Storage().String())
 			statusSizeGi, _ := convertToGi(pvc.Status.Capacity.Storage().String())
 
-			// 4) measure usage from mount
+			// measure usage
 			mountPath := pvcUIDToMount[uid]
-			var usagePercent, usedGi int
-			if mountPath == "" {
-				recorder.Eventf(invRef, corev1.EventTypeWarning, "MountNotFound",
-					"No mount path found for PVC '%s'", pvcName)
-				usagePercent = -1
-				usedGi = -1
-			} else {
-				usagePercent, usedGi, err = measureUsage(mountPath, specSizeGi)
-				if err != nil {
-					recorder.Eventf(invRef, corev1.EventTypeWarning, "MeasureFailed",
-						"Failed measuring usage for mount '%s': %v", mountPath, err)
-					usagePercent = -1
-					usedGi = -1
-				}
-			}
-
-			// 5) if specSize >= maxSize & status == spec => mark reached
-			if specSizeGi >= maxSizeGi && specSizeGi == statusSizeGi {
-				patchData := []byte(`{"status":{"reachedMaxSize":true}}`)
-				_, _ = dynClient.Resource(gvr).Namespace(ns).
-					Patch(ctx, vsUnstructMap[vsKey].Name, types.MergePatchType, patchData, metav1.PatchOptions{}, "status")
-				msg := fmt.Sprintf("PVC '%s/%s' reached maxSize=%.0fGi. usage=%d%%",
-					ns, pvcName, maxSizeGi, usagePercent)
-				recorder.Event(invRef, corev1.EventTypeWarning, "AtMaxSize", msg)
-				fmt.Printf("[WARNING] %s\n", msg)
+			usagePercent, usedGi, err := measureUsage(mountPath, specSizeGi)
+			if err != nil {
+				recorder.Eventf(pvc, corev1.EventTypeWarning, "MeasureFailed",
+					"Failed to measure usage at '%s': %v", mountPath, err)
 				continue
 			}
 
-			// 6) is a resize in progress?
-			inProgress := statusSizeGi < specSizeGi
+			// check if we are at or beyond maxSize
+			if maxSizeStr != "" &&
+				specSizeGi >= maxSizeGi &&
+				specSizeGi == statusSizeGi {
 
-			// 7) if was in progress but now complete
-			if vsObj.Status.ResizeInProgress && !inProgress {
-				reachedMax := specSizeGi >= maxSizeGi
-				msg := fmt.Sprintf("PVC '%s/%s' expansion complete. Capacity=%.0fGi, usage=%d%%.",
-					ns, pvcName, statusSizeGi, usagePercent)
-				recorder.Event(invRef, corev1.EventTypeNormal, "ResizeComplete", msg)
+				// Mark as reachedMax
+				updatePVCAnnotation(ctx, clientset, pvc, annotationReachedMax, "true")
+				msg := fmt.Sprintf("PVC '%s/%s' reached maxSize=%.0fGi. usage=%d%% => no expansion needed.",
+					pvc.Namespace, pvc.Name, maxSizeGi, usagePercent)
+				recorder.Event(pvc, corev1.EventTypeNormal, "AtMaxSize", msg)
 				fmt.Printf("[INFO] %s\n", msg)
+				continue
+			}
 
+			inProgress := statusSizeGi < specSizeGi
+			wasInProgress := (ann[annotationResizeInProgress] == "true")
+
+			// if we *were* in progress, but now complete
+			if wasInProgress && !inProgress {
+				updatePVCAnnotation(ctx, clientset, pvc, annotationResizeInProgress, "false")
 				nowStr := time.Now().UTC().Format(time.RFC3339)
-				patchDone := []byte(fmt.Sprintf(
-					`{"status":{"resizeInProgress":false,"scaledAt":"%s","reachedMaxSize":%t}}`,
-					nowStr, reachedMax))
-				_, pErr := dynClient.Resource(gvr).Namespace(ns).
-					Patch(ctx, vsUnstructMap[vsKey].Name, types.MergePatchType, patchDone, metav1.PatchOptions{}, "status")
-				if pErr != nil {
-					fmt.Printf("[ERROR] clearing resizeInProgress for VolumeScaler %s: %v\n", vsKey, pErr)
+				updatePVCAnnotation(ctx, clientset, pvc, annotationScaledAt, nowStr)
+
+				if maxSizeStr != "" && specSizeGi >= maxSizeGi {
+					updatePVCAnnotation(ctx, clientset, pvc, annotationReachedMax, "true")
 				}
+
+				msg := fmt.Sprintf("PVC '%s/%s' expansion complete. Capacity=%.0fGi, usage=%d%%.",
+					pvc.Namespace, pvc.Name, statusSizeGi, usagePercent)
+				recorder.Event(pvc, corev1.EventTypeNormal, "ResizeComplete", msg)
+				fmt.Printf("[INFO] %s\n", msg)
 				continue
 			}
 
-			// 8) if still in progress, log an event
+			// if still in progress
 			if inProgress {
-				pvcErrMsg := checkAndHandleResizeFailedEvents(ctx, clientset, pvcName, ns)
-				if pvcErrMsg != "" {
-					logMsg := fmt.Sprintf(
-						"PVC '%s/%s' still resizing (Spec=%.0fGi, Status=%.0fGi) due to '%s'. usage=%dGi (%d%%).",
-						ns, pvcName, specSizeGi, statusSizeGi, pvcErrMsg, usedGi, usagePercent)
-					recorder.Event(invRef, corev1.EventTypeWarning, "StillResizing", logMsg)
-					fmt.Printf("[ERROR] %s\n", logMsg)
-				} else {
-					logMsg := fmt.Sprintf(
-						"PVC '%s/%s' still resizing (Spec=%.0fGi, Status=%.0fGi). usage=%dGi (%d%%).",
-						ns, pvcName, specSizeGi, statusSizeGi, usedGi, usagePercent)
-					recorder.Event(invRef, corev1.EventTypeWarning, "StillResizing", logMsg)
-					fmt.Printf("[ERROR] %s\n", logMsg)
-				}
+				msg := fmt.Sprintf("PVC '%s/%s' still resizing (Spec=%.0fGi, Status=%.0fGi). usage=%dGi (%d%%).",
+					pvc.Namespace, pvc.Name, specSizeGi, statusSizeGi, usedGi, usagePercent)
+				recorder.Event(pvc, corev1.EventTypeWarning, "StillResizing", msg)
+				fmt.Printf("[INFO] %s\n", msg)
 				continue
 			}
 
-			// 9) usage >= threshold => attempt to expand
+			// usage vs threshold
 			if usagePercent >= int(thresholdF) {
-				cd, err := parseCooldownDuration(vsObj.Spec.CooldownPeriod)
+				// parse cooldown
+				cd, err := parseCooldownDuration(cooldownStr)
 				if err != nil {
-					recorder.Eventf(invRef, corev1.EventTypeWarning, "InvalidCooldown",
-						"CooldownPeriod '%s' invalid: %v", vsObj.Spec.CooldownPeriod, err)
+					msg := fmt.Sprintf("Invalid cooldownPeriod '%s': %v", cooldownStr, err)
+					recorder.Event(pvc, corev1.EventTypeWarning, "InvalidCooldown", msg)
 					continue
 				}
-				okToScale, err := canScaleNow(vsObj.Status.ScaledAt, cd)
+				// check scaledAt
+				lastScaledAtStr := ann[annotationScaledAt]
+				okToScale, err := canScaleNow(lastScaledAtStr, cd)
 				if err != nil {
-					recorder.Eventf(invRef, corev1.EventTypeWarning, "CooldownError",
+					recorder.Eventf(pvc, corev1.EventTypeWarning, "CooldownError",
 						"Failed to check cooldownPeriod: %v", err)
 					continue
 				}
 				if !okToScale {
-					msg := fmt.Sprintf(
-						"PVC '%s/%s' usage=%d%% >= threshold=%s, but in cooldown. Skipping expansion.",
-						ns, pvcName, usagePercent, vsObj.Spec.Threshold)
+					msg := fmt.Sprintf("PVC '%s/%s' usage=%d%% >= threshold=%s, but still in cooldown. Skipping expansion.",
+						pvc.Namespace, pvc.Name, usagePercent, thresholdStr)
 					fmt.Printf("[INFO] %s\n", msg)
-					recorder.Event(invRef, corev1.EventTypeNormal, "CooldownActive", msg)
+					recorder.Event(pvc, corev1.EventTypeNormal, "InCooldown", msg)
 					continue
 				}
 
 				// compute new size
-				newSizeGi, err := computeNewSize(vsObj.Spec.Scale, vsObj.Spec.ScaleType, specSizeGi)
+				newSizeGi, err := computeNewSize(scaleStr, scaleType, specSizeGi)
 				if err != nil {
-					recorder.Eventf(invRef, corev1.EventTypeWarning, "ScaleParseError",
-						"Failed parsing scale '%s' with type '%s': %v",
-						vsObj.Spec.Scale, vsObj.Spec.ScaleType, err)
+					msg := fmt.Sprintf("Failed to parse scale '%s' with type '%s': %v", scaleStr, scaleType, err)
+					recorder.Event(pvc, corev1.EventTypeWarning, "ScaleParseError", msg)
 					continue
 				}
-				if newSizeGi > maxSizeGi {
+				// enforce maxSize
+				if maxSizeStr != "" && newSizeGi > maxSizeGi {
 					newSizeGi = maxSizeGi
 				}
+				// if no net expansion
 				if newSizeGi <= specSizeGi {
-					msg := fmt.Sprintf(
-						"Computed newSize=%.0fGi <= current=%.0fGi. usage=%d%% => no net expansion.",
+					msg := fmt.Sprintf("No net expansion (newSize=%.0fGi <= current=%.0fGi). usage=%d%% => skip.",
 						newSizeGi, specSizeGi, usagePercent)
 					fmt.Printf("[INFO] %s\n", msg)
 					continue
 				}
 
+				// Patch the PVC spec
 				newSizeStr := fmt.Sprintf("%.0fGi", newSizeGi)
 				pvcPatch := []byte(fmt.Sprintf(`{"spec":{"resources":{"requests":{"storage":"%s"}}}}`, newSizeStr))
-				_, patchErr := clientset.CoreV1().PersistentVolumeClaims(ns).Patch(
-					ctx, pvcName, types.MergePatchType, pvcPatch, metav1.PatchOptions{})
+				_, patchErr := clientset.CoreV1().PersistentVolumeClaims(pvc.Namespace).Patch(
+					ctx, pvc.Name, types.MergePatchType, pvcPatch, metav1.PatchOptions{},
+				)
 				if patchErr != nil {
-					msg := fmt.Sprintf(
-						"Failed initiating expansion from %.0fGi -> %s: %v",
+					msg := fmt.Sprintf("Failed to initiate expansion from %.0fGi -> %s: %v",
 						specSizeGi, newSizeStr, patchErr)
-					recorder.Event(invRef, corev1.EventTypeWarning, "ResizeFailed", msg)
+					recorder.Event(pvc, corev1.EventTypeWarning, "ResizeFailed", msg)
 					fmt.Printf("[ERROR] %s\n", msg)
 					continue
 				}
 
-				succMsg := fmt.Sprintf(
-					"Initiated resize of PVC '%s/%s' from %.0fGi -> %s. usage=%d%%, used=%dGi",
-					ns, pvcName, specSizeGi, newSizeStr, usagePercent, usedGi)
-				recorder.Event(invRef, corev1.EventTypeNormal, "ResizeRequested", succMsg)
+				succMsg := fmt.Sprintf("Initiated resize of PVC '%s/%s' from %.0fGi -> %s. usage=%d%%, used=%dGi",
+					pvc.Namespace, pvc.Name, specSizeGi, newSizeStr, usagePercent, usedGi)
+				recorder.Event(pvc, corev1.EventTypeNormal, "ResizeRequested", succMsg)
 				fmt.Printf("[INFO] %s\n", succMsg)
 
+				// update annotation status
 				nowStr := time.Now().UTC().Format(time.RFC3339)
-				stPatch := []byte(fmt.Sprintf(
-					`{"status":{"resizeInProgress":true,"lastRequestedSize":"%s","scaledAt":"%s"}}`,
-					newSizeStr, nowStr))
-				_, stErr := dynClient.Resource(gvr).Namespace(ns).
-					Patch(ctx, vsUnstructMap[vsKey].Name, types.MergePatchType, stPatch, metav1.PatchOptions{}, "status")
-				if stErr != nil {
-					fmt.Printf("[ERROR] updating CR status after expansion request for VolumeScaler %s: %v\n", vsKey, stErr)
-				}
+				updatePVCAnnotation(ctx, clientset, pvc, annotationResizeInProgress, "true")
+				updatePVCAnnotation(ctx, clientset, pvc, annotationScaledAt, nowStr)
 
 			} else {
 				msg := fmt.Sprintf("PVC '%s/%s' usage=%d%% < threshold=%s; no expansion needed.",
-					ns, pvcName, usagePercent, vsObj.Spec.Threshold)
+					pvc.Namespace, pvc.Name, usagePercent, thresholdStr)
 				fmt.Printf("[INFO] %s\n", msg)
 			}
 		}
-		// wait 60s before next iteration
+
 		time.Sleep(60 * time.Second)
 	}
 }
 
-// ------------------------------------------------------------
-// 9) main
-// ------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// main - sets up the client, scheme, event recorder, then loops
+// -----------------------------------------------------------------------------
 func main() {
 	config, err := inClusterOrKubeconfig()
 	if err != nil {
 		panic(err.Error())
 	}
+
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		panic(err.Error())
 	}
-	dynClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		panic(err.Error())
-	}
 
-	// Setup event broadcaster
-	scheme := runtime.NewScheme()
+	// Make sure the core APIs (like PVC) are registered in the scheme
+	// so the event recorder can create a proper reference
+	utilruntime.Must(corev1.AddToScheme(scheme.Scheme))
+
+	// Setup event broadcaster & recorder
 	broadcaster := record.NewBroadcaster()
 	broadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{
 		Interface: clientset.CoreV1().Events(""),
 	})
-	recorder := broadcaster.NewRecorder(scheme, corev1.EventSource{Component: "volumescaler-controller"})
 
-	// Updated GVR to use new group/version
-	gvr := schema.GroupVersionResource{
-		Group:    "autoscaling.storage.k8s.io",
-		Version:  "v1alpha1",
-		Resource: "volumescalers",
-	}
+	// Use the global scheme (which has corev1)
+	recorder := broadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: "pvc-volumescaler"})
 
-	fmt.Println("Starting VolumeScaler operator...")
-	mainLoop(clientset, dynClient, recorder, gvr)
+	fmt.Println("Starting PVC-annotation-based VolumeScaler...")
+
+	// main loop
+	mainLoop(clientset, recorder)
 }
