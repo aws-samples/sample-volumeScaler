@@ -2,11 +2,11 @@
 
 image:
   repository: public.ecr.aws/ghanem/volumescaler
-  tag: "{{ .Chart.Version }}"      # Use a semantic version or "latest"
+  tag: "{{ .Chart.AppVersion }}"    t"
   pullPolicy: Always
 
 rbac:
-  create: true       # If you want optional toggling of RBAC creation
+  create: true       n
   serviceAccountName: pvc-resizer
 
 daemonset:
