@@ -108,7 +108,7 @@ image:
 		-f Dockerfile \
 		.
 
-# Build multi-arch images for all OS/ARCH combos, pushing them individually to the registry
+# (Old approach) Build multi-arch images for all OS/ARCH combos individually
 .PHONY: all-image
 all-image: $(addprefix sub-image-,$(ALL_OS_ARCH_OSVERSION))
 
@@ -127,8 +127,22 @@ buildx-image:
 		--build-arg COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
 		-f Dockerfile \
-		--output type=registry \
+		--push \
 		.
+
+# New target: Build and push a unified multi-arch image in one command.
+.PHONY: multiarch-image
+multiarch-image:
+	@echo "Building and pushing multi-arch image for platforms linux/amd64,linux/arm64 with OSVERSION alpine..."
+	docker buildx build \
+		--platform=linux/amd64,linux/arm64 \
+		--progress=plain \
+		-t $(REGISTRY)/$(IMAGE_NAME):$(TAG) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-f Dockerfile \
+		--push
 
 # Create & push a Docker manifest that references each OS/ARCH tag under a single $(TAG)
 .PHONY: create-manifest
@@ -156,7 +170,7 @@ lint:
 	fi
 	golangci-lint run --timeout=5m ./...
 
-# Example: Release target that can build & push everything in one go
+# Updated Release target that builds & pushes a multi-arch image in one go.
 .PHONY: release
-release: all-image push-manifest
+release: multiarch-image
 	@echo "Release complete for version: $(VERSION)"
