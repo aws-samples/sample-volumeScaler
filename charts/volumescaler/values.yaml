@@ -2,11 +2,11 @@
 
 image:
   repository: public.ecr.aws/ghanem/volumescaler
-  tag: "{{ .Chart.AppVersion }}"    t"
+  tag: "{{ .Chart.AppVersion }}"
   pullPolicy: Always
 
 rbac:
-  create: true       n
+  create: true
   serviceAccountName: pvc-resizer
 
 daemonset:
