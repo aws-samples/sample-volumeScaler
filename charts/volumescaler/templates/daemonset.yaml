@@ -22,7 +22,7 @@ spec:
       serviceAccountName: {{ .Values.rbac.serviceAccountName }}
       containers:
       - name: volumescaler
-        image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
+        image: {{ printf "%s:%s" .Values.image.repository .Chart.AppVersion | quote }}
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         env:
           - name: NODE_NAME_ENV
