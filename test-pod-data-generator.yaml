@@ -12,7 +12,7 @@ spec:
     requests:
       storage: 5Gi
 ---
-apiVersion: zghanem.aws/v1
+apiVersion: autoscaling.storage.k8s.io/v1alpha1
 kind: VolumeScaler
 metadata:
   name: test-ebs-claim
@@ -24,7 +24,7 @@ spec:
   scale: "30%"
   maxSize: 6Gi
 # ---
-# apiVersion: zghanem.aws/v1
+# apiVersion: autoscaling.storage.k8s.io/v1alpha1
 # kind: VolumeScaler
 # metadata:
 #   name: test-ebs-claim
