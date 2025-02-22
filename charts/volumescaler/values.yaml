@@ -2,7 +2,7 @@
 
 image:
   repository: public.ecr.aws/ghanem/volumescaler
-  tag: ""      # Use a semantic version or "latest"
+  tag: "{{ .Chart.Version }}"      # Use a semantic version or "latest"
   pullPolicy: Always
 
 rbac:
