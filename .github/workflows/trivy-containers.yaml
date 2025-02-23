@@ -16,7 +16,7 @@ jobs:
       - name: Generate Docker Images List
         id: set-matrix
         run: |
-          result=$(yq '[{"repository": .image.repository, "tag": "v'$(yq '.appVersion' charts/volumescaler/Chart.yaml)'"}] + (.sidecars | map(.image)) | map(.repository + ":" + .tag) | . style="flow"' charts/volumescaler/values.yaml)
+          result=$(yq '[{"repository": .image.repository, "tag": "'$(yq '.appVersion' charts/volumescaler/Chart.yaml)'"}] + (.sidecars | map(.image)) | map(.repository + ":" + .tag) | . style="flow"' charts/volumescaler/values.yaml)
           echo "::set-output name=result::${result}"
 
   trivy-scan:
