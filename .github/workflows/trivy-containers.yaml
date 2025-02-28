@@ -5,6 +5,11 @@ on:
   schedule:
     - cron: '0 */24 * * *'
 
+# Ensure we grant the necessary permissions for uploading SARIF
+permissions:
+  contents: read         # Needed for checkout
+  security-events: write # Needed for uploading scan results to GitHub's security tab
+
 jobs:
   build-matrix:
     runs-on: ubuntu-latest
@@ -13,9 +18,12 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
       - name: Generate Docker Images List
         id: set-matrix
         run: |
+          # Example command that uses yq to build the image list:
+          # Adjust to your chart/values.yaml paths or your naming as needed
           result=$(yq '[{"repository": .image.repository, "tag": "'$(yq '.appVersion' charts/volumescaler/Chart.yaml)'"}] + (.sidecars | map(.image)) | map(.repository + ":" + .tag) | . style="flow"' charts/volumescaler/values.yaml)
           echo "::set-output name=result::${result}"
 
@@ -25,6 +33,7 @@ jobs:
     strategy:
       matrix:
         image: ${{ fromJson(needs.build-matrix.outputs.images) }}
+
     steps:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -36,12 +45,15 @@ jobs:
           aws-region: us-east-1
           role-duration-seconds: 1800
           role-skip-session-tagging: true
+
       - name: Login to Amazon ECR Public
         uses: aws-actions/amazon-ecr-login@v2
         with:
           registry-type: public
+
       - name: Pull container image
         run: docker pull ${{ matrix.image }}
+
       - name: Scan container image
         uses: aquasecurity/trivy-action@0.29.0
         env:
@@ -52,7 +64,10 @@ jobs:
           format: 'sarif'
           ignore-unfixed: true
           severity: 'HIGH,CRITICAL'
+
       - name: Upload Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'results.sarif'
+          # This step requires 'security-events: write' permission
+          # which is set at the top-level permissions block
