@@ -31,7 +31,7 @@ require (
     github.com/spf13/pflag v1.0.5 // indirect
     github.com/x448/float16 v0.8.4 // indirect
 
-    # IMPORTANT: Upgraded from v0.30.0 to v0.33.0
+    // IMPORTANT: Upgraded from v0.30.0 to v0.33.0
     golang.org/x/net v0.33.0 // indirect
 
     golang.org/x/oauth2 v0.23.0 // indirect
