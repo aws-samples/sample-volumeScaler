@@ -3,6 +3,8 @@ kind: CustomResourceDefinition
 metadata:
   # Changed name to reflect "volumescalers.autoscaling.storage.k8s.io"
   name: volumescalers.autoscaling.storage.k8s.io
+  annotations:
+    api-approved.kubernetes.io: "https://github.com/kubernetes/enhancements/pull/1111"
 spec:
   # Changed group to autoscaling.storage.k8s.io
   group: autoscaling.storage.k8s.io

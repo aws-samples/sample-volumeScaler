@@ -3,11 +3,11 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: test-ebs-claim
-  namespace: ghanem
+  
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: ebs-sc
+  storageClassName: gp2
   resources:
     requests:
       storage: 5Gi
@@ -16,7 +16,7 @@ apiVersion: autoscaling.storage.k8s.io/v1alpha1
 kind: VolumeScaler
 metadata:
   name: test-ebs-claim
-  namespace: ghanem
+  
 spec:
   pvcName: test-ebs-claim
   threshold: "70%"
@@ -28,7 +28,7 @@ spec:
 # kind: VolumeScaler
 # metadata:
 #   name: test-ebs-claim
-#   namespace: ghanem
+#   
 # spec:
 #   pvcName: test-ebs-claim
 #   threshold: "70%"
@@ -41,7 +41,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: test-data-generator
-  namespace: ghanem
+  
 spec:
   replicas: 1
   selector:
