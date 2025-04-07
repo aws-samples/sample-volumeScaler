@@ -10,7 +10,7 @@
 VERSION ?= v0.1.0
 
 # Go package import path; update to match your actual module
-PKG_PATH = github.com/zghanem0/AmazonVolumeScaler
+PKG_PATH = github.com/aws-samples/sample-volumeScaler
 
 # We embed commit SHA and build date into the binary
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD)
