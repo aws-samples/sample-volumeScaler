@@ -23,13 +23,13 @@ version: 0.1.6
 # It is recommended to use it with quotes.
 appVersion: "v0.1.0"
 kubeVersion: ">=1.17.0-0"
-home: https://github.com/zghanem0/AmazonVolumeScaler
+home: https://github.com/aws-samples/sample-volumeScaler.git
 sources:
-  - https://github.com/zghanem0/AmazonVolumeScaler
+  - https://github.com/aws-samples/sample-volumeScaler.git
 keywords:
   - aws
   - ebs
   - csi
 maintainers:
   - name: Kubernetes Authors
-    url: https://github.com/zghanem0/AmazonVolumeScaler
+    url: https://github.com/aws-samples/sample-volumeScaler.git

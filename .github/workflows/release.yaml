@@ -40,6 +40,6 @@ jobs:
             volumescaler
 
             ## CHANGELOG
-            See [CHANGELOG](https://github.com/zghanem0/AmazonVolumeScaler/blob/master/CHANGELOG.md) for full list of changes
+            See [CHANGELOG](https://github.com/aws-samples/sample-volumeScaler.git/blob/master/CHANGELOG.md) for full list of changes
           draft: true
           prerelease: true

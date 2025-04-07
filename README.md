@@ -21,16 +21,16 @@ When deploying volume in k8s we normally facing the following challenges.
 ### Install with kubectl
 
    ```bash
-   git clone git@github.com:zghanem0/AmazonVolumeScaler.git
-   cd AmazonVolumeScaler && kubectl apply -f volumescaler.yaml
+   git clone git@github.com:aws-samples/sample-volumeScaler.git
+   cd sample-volumeScaler && kubectl apply -f volumescaler.yaml
    ```
 
 ### Install with Helm
 
   ```bash
-  helm repo add amazonvolumescaler https://zghanem0.github.io/AmazonVolumeScaler
+  helm repo add sample-volumeScaler https://aws-samples.github.io/sample-volumeScaler
   helm repo update                                                                 
-  helm upgrade --install my-release amazonvolumescaler/volumescaler --version 0.1.6
+  helm upgrade --install my-release sample-volumeScaler/volumescaler --version 0.1.6
   ```
 
 ## Testing
