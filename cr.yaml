@@ -1,5 +1,4 @@
-owner: zghanem0
-git-repo: AmazonVolumeScaler
-charts-repo: https://zghanem0.github.io/AmazonVolumeScaler
-packages-with-index: true
-charts-dir: charts/volumescaler 
+owner: aws-samples
+git-repo: sample-volumeScaler
+charts-repo: https://aws-samples.github.io/sample-volumeScaler
+packages-with-index: true 
