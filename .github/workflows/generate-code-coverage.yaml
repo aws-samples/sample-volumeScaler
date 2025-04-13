@@ -35,6 +35,9 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
+      - name: Download dependencies
+        run: go mod download
+
       - name: Generate report
         run: |
           go test -coverprofile base-coverage.tmp ./cmd/... 
@@ -57,6 +60,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
+
+      - name: Download dependencies
+        run: go mod download
 
       - name: Generate report
         run: |
