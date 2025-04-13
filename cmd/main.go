@@ -261,6 +261,9 @@ func measureUsage(mountPath string, specSizeGi float64) (int, int, error) {
 	return usagePercent, int(usedGi + 0.5), nil
 }
 
+// For testing purposes
+var measureUsageFunc = measureUsage
+
 // -------------------------------------------------------------
 // 6) checkAndHandleResizeFailedEvents:
 // Looks for warnings with reason="VolumeResizeFailed"
@@ -371,13 +374,13 @@ func computeNewSize(scale, scaleType string, currentSizeGi float64) (float64, er
 // ------------------------------------------------------------
 type VolumeScalerController struct {
 	config    *ControllerConfig
-	clientset *kubernetes.Clientset
+	clientset kubernetes.Interface
 	dynClient dynamic.Interface
 	recorder  record.EventRecorder
 	gvr       schema.GroupVersionResource
 }
 
-func NewVolumeScalerController(config *ControllerConfig, clientset *kubernetes.Clientset, dynClient dynamic.Interface, recorder record.EventRecorder, gvr schema.GroupVersionResource) *VolumeScalerController {
+func NewVolumeScalerController(config *ControllerConfig, clientset kubernetes.Interface, dynClient dynamic.Interface, recorder record.EventRecorder, gvr schema.GroupVersionResource) *VolumeScalerController {
 	return &VolumeScalerController{
 		config:    config,
 		clientset: clientset,
@@ -507,7 +510,7 @@ func (c *VolumeScalerController) reconcilePVC(ctx context.Context, pvc *corev1.P
 		usagePercent = -1
 		usedGi = -1
 	} else {
-		usagePercent, usedGi, err = measureUsage(mountPath, specSizeGi)
+		usagePercent, usedGi, err = measureUsageFunc(mountPath, specSizeGi)
 		if err != nil {
 			c.recorder.Eventf(invRef, corev1.EventTypeWarning, "MeasureFailed",
 				"Failed measuring usage for mount '%s': %v", mountPath, err)
