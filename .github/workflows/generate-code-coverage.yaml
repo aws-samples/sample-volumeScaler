@@ -35,8 +35,8 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
-      - name: Download dependencies
-        run: go mod download
+      - name: Download and tidy dependencies
+        run: go mod tidy
 
       - name: Generate report
         run: |
@@ -61,8 +61,8 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
-      - name: Download dependencies
-        run: go mod download
+      - name: Download and tidy dependencies
+        run: go mod tidy
 
       - name: Generate report
         run: |
