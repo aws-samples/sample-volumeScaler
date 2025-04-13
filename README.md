@@ -30,7 +30,7 @@ When deploying volume in k8s we normally facing the following challenges.
   ```bash
   helm repo add sample-volumeScaler https://aws-samples.github.io/sample-volumeScaler
   helm repo update                                                                 
-  helm upgrade --install my-release sample-volumeScaler/volumescaler --version 0.1.6
+  helm upgrade --install volumescaler sample-volumeScaler/volumescaler 
   ```
 
 ## Testing
