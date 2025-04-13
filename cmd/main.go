@@ -518,26 +518,10 @@ func (c *VolumeScalerController) reconcilePVC(ctx context.Context, pvc *corev1.P
 		}
 	}
 
-	// 5) if specSize >= maxSize & status == spec => mark reached
-	if specSizeGi >= maxSizeGi && specSizeGi == statusSizeGi {
-		patchData := []byte(`{"status":{"reachedMaxSize":true}}`)
-		_, err = c.dynClient.Resource(c.gvr).Namespace(vsName.Namespace).
-			Patch(ctx, vsName.Name, types.MergePatchType, patchData, metav1.PatchOptions{}, "status")
-		if err != nil {
-			return fmt.Errorf("patching reachedMaxSize: %v", err)
-		}
-
-		msg := fmt.Sprintf("PVC '%s/%s' reached maxSize=%.0fGi. usage=%d%%",
-			vsName.Namespace, pvc.Name, maxSizeGi, usagePercent)
-		c.recorder.Event(invRef, corev1.EventTypeWarning, eventReasonAtMaxSize, msg)
-		fmt.Printf("[WARNING] %s\n", msg)
-		return nil
-	}
-
-	// 6) is a resize in progress?
+	// 5) is a resize in progress?
 	inProgress := statusSizeGi < specSizeGi
 
-	// 7) if was in progress but now complete
+	// 6) if was in progress but now complete
 	if vsObj.Status.ResizeInProgress && !inProgress {
 		reachedMax := specSizeGi >= maxSizeGi
 		msg := fmt.Sprintf("PVC '%s/%s' expansion complete. Capacity=%.0fGi, usage=%d%%.",
@@ -557,7 +541,7 @@ func (c *VolumeScalerController) reconcilePVC(ctx context.Context, pvc *corev1.P
 		return nil
 	}
 
-	// 8) if still in progress, log an event
+	// 7) if still in progress, log an event
 	if inProgress {
 		pvcErrMsg := checkAndHandleResizeFailedEvents(ctx, c.clientset, pvc.Name, vsName.Namespace)
 		if pvcErrMsg != "" {
@@ -576,7 +560,7 @@ func (c *VolumeScalerController) reconcilePVC(ctx context.Context, pvc *corev1.P
 		return nil
 	}
 
-	// 9) usage >= threshold => attempt to expand
+	// 8) usage >= threshold => attempt to expand
 	if usagePercent >= int(thresholdF) {
 		cd, err := parseCooldownDuration(vsObj.Spec.CooldownPeriod)
 		if err != nil {
@@ -610,8 +594,23 @@ func (c *VolumeScalerController) reconcilePVC(ctx context.Context, pvc *corev1.P
 			return fmt.Errorf("computing new size: %v", err)
 		}
 
+		// If we can't scale up because we're at max size, mark as reached max size
 		if newSizeGi > maxSizeGi {
 			newSizeGi = maxSizeGi
+			if specSizeGi >= maxSizeGi {
+				patchData := []byte(`{"status":{"reachedMaxSize":true}}`)
+				_, err = c.dynClient.Resource(c.gvr).Namespace(vsName.Namespace).
+					Patch(ctx, vsName.Name, types.MergePatchType, patchData, metav1.PatchOptions{}, "status")
+				if err != nil {
+					return fmt.Errorf("patching reachedMaxSize: %v", err)
+				}
+
+				msg := fmt.Sprintf("PVC '%s/%s' reached maxSize=%.0fGi. usage=%d%%",
+					vsName.Namespace, pvc.Name, maxSizeGi, usagePercent)
+				c.recorder.Event(invRef, corev1.EventTypeWarning, eventReasonAtMaxSize, msg)
+				fmt.Printf("[WARNING] %s\n", msg)
+				return nil
+			}
 		}
 
 		if newSizeGi <= specSizeGi {
