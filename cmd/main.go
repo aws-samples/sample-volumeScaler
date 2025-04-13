@@ -68,6 +68,10 @@ type VolumeScaler struct {
 
 	Spec   VolumeScalerSpec   `json:"spec"`
 	Status VolumeScalerStatus `json:"status,omitempty"`
+
+	// Additional fields for Kubernetes API compatibility
+	APIVersion string `json:"apiVersion,omitempty"`
+	Kind       string `json:"kind,omitempty"`
 }
 
 // StorageSize represents a storage size with unit
@@ -295,7 +299,7 @@ func makeInvolvedObjectRef(vsName types.NamespacedName, vsObj *VolumeScaler) *co
 		Kind:       vsObj.Kind,
 		Namespace:  vsName.Namespace,
 		Name:       vsName.Name,
-		UID:        vsObj.UID,
+		UID:        vsObj.ObjectMeta.UID,
 	}
 }
 
