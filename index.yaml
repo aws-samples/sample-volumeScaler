@@ -6,7 +6,7 @@ entries:
     created: "2025-02-22T04:26:08.489971012Z"
     description: A Helm chart for Kubernetes
     digest: 8b3b3a4ec34e8d6b6290cfe016c627dfb140088b87f11d03a8c8cd392c86fcb4
-    home: https://github.com/zghanem/volumescaler
+    home: https://github.com/aws-samples/sample-volumeScaler
     keywords:
     - aws
     - ebs
@@ -14,20 +14,20 @@ entries:
     kubeVersion: '>=1.17.0-0'
     maintainers:
     - name: Kubernetes Authors
-      url: https://github.com/zghanem/volumescaler
+      url: https://github.com/aws-samples/sample-volumeScaler
     name: volumescaler
     sources:
-    - https://github.com/zghanem/volumescaler
+    - https://github.com/aws-samples/sample-volumeScaler
     type: application
     urls:
-    - https://github.com/zghanem0/AmazonVolumeScaler/releases/download/helm-chart-volumescaler-0.1.6/volumescaler-0.1.6.tgz
+    - https://github.com/aws-samples/sample-volumeScaler/releases/download/helm-chart-volumescaler-0.1.6/volumescaler-0.1.6.tgz
     version: 0.1.6
   - apiVersion: v2
     appVersion: 0.1.0
     created: "2025-02-22T04:10:36.04608246Z"
     description: A Helm chart for Kubernetes
     digest: a831e57ec8ffae830234aebc23012604713b52c159fef0c1ad62a2f40934740e
-    home: https://github.com/zghanem/volumescaler
+    home: https://github.com/aws-samples/sample-volumeScaler
     keywords:
     - aws
     - ebs
@@ -35,20 +35,20 @@ entries:
     kubeVersion: '>=1.17.0-0'
     maintainers:
     - name: Kubernetes Authors
-      url: https://github.com/zghanem/volumescaler
+      url: https://github.com/aws-samples/sample-volumeScaler
     name: volumescaler
     sources:
-    - https://github.com/zghanem/volumescaler
+    - https://github.com/aws-samples/sample-volumeScaler
     type: application
     urls:
-    - https://github.com/zghanem0/AmazonVolumeScaler/releases/download/helm-chart-volumescaler-0.1.5/volumescaler-0.1.5.tgz
+    - https://github.com/aws-samples/sample-volumeScaler/releases/download/helm-chart-volumescaler-0.1.5/volumescaler-0.1.5.tgz
     version: 0.1.5
   - apiVersion: v2
     appVersion: 0.1.0
     created: "2025-02-22T03:58:57.637168302Z"
     description: A Helm chart for Kubernetes
     digest: 6d3c80ce140fe5b1be4b59bff371d0e73dcd92e3932b873487cf9ae8e639a1d9
-    home: https://github.com/zghanem/volumescaler
+    home: https://github.com/aws-samples/sample-volumeScaler
     keywords:
     - aws
     - ebs
@@ -56,20 +56,20 @@ entries:
     kubeVersion: '>=1.17.0-0'
     maintainers:
     - name: Kubernetes Authors
-      url: https://github.com/zghanem/volumescaler
+      url: https://github.com/aws-samples/sample-volumeScaler
     name: volumescaler
     sources:
-    - https://github.com/zghanem/volumescaler
+    - https://github.com/aws-samples/sample-volumeScaler
     type: application
     urls:
-    - https://github.com/zghanem0/AmazonVolumeScaler/releases/download/helm-chart-volumescaler-0.1.4/volumescaler-0.1.4.tgz
+    - https://github.com/aws-samples/sample-volumeScaler/releases/download/helm-chart-volumescaler-0.1.4/volumescaler-0.1.4.tgz
     version: 0.1.4
   - apiVersion: v2
     appVersion: 1.1.1
     created: "2025-02-22T03:33:48.496714912Z"
     description: A Helm chart for Kubernetes
     digest: 9f4875fdf20a25b72800b23b8de232fead1ee9cdb967e1382c9c2aafce2da4d0
-    home: https://github.com/zghanem/volumescaler
+    home: https://github.com/aws-samples/sample-volumeScaler
     keywords:
     - aws
     - ebs
@@ -77,20 +77,20 @@ entries:
     kubeVersion: '>=1.17.0-0'
     maintainers:
     - name: Kubernetes Authors
-      url: https://github.com/zghanem/volumescaler
+      url: https://github.com/aws-samples/sample-volumeScaler
     name: volumescaler
     sources:
-    - https://github.com/zghanem/volumescaler
+    - https://github.com/aws-samples/sample-volumeScaler
     type: application
     urls:
-    - https://github.com/zghanem0/AmazonVolumeScaler/releases/download/helm-chart-volumescaler-0.1.3/volumescaler-0.1.3.tgz
+    - https://github.com/aws-samples/sample-volumeScaler/releases/download/helm-chart-volumescaler-0.1.3/volumescaler-0.1.3.tgz
     version: 0.1.3
   - apiVersion: v2
     appVersion: 1.1.0
     created: "2025-02-22T03:18:19.458907852Z"
     description: A Helm chart for Kubernetes
     digest: 02e0a23b074c62eec3f9985ba574197c2c9e63cfb7865cda2eda698b2448ba68
-    home: https://github.com/zghanem/volumescaler
+    home: https://github.com/aws-samples/sample-volumeScaler
     keywords:
     - aws
     - ebs
@@ -98,20 +98,20 @@ entries:
     kubeVersion: '>=1.17.0-0'
     maintainers:
     - name: Kubernetes Authors
-      url: https://github.com/zghanem/volumescaler
+      url: https://github.com/aws-samples/sample-volumeScaler
     name: volumescaler
     sources:
-    - https://github.com/zghanem/volumescaler
+    - https://github.com/aws-samples/sample-volumeScaler
     type: application
     urls:
-    - https://github.com/zghanem0/AmazonVolumeScaler/releases/download/helm-chart-volumescaler-0.1.2/volumescaler-0.1.2.tgz
+    - https://github.com/aws-samples/sample-volumeScaler/releases/download/helm-chart-volumescaler-0.1.2/volumescaler-0.1.2.tgz
     version: 0.1.2
   - apiVersion: v2
     appVersion: 1.1.0
     created: "2025-02-22T02:43:41.144108805Z"
     description: A Helm chart for Kubernetes
     digest: daf10dc0b2868588d53bfc04c952522369934cf929396b2ff3491a9d7474fb44
-    home: https://github.com/zghanem/volumescaler
+    home: https://github.com/aws-samples/sample-volumeScaler
     keywords:
     - aws
     - ebs
@@ -119,20 +119,20 @@ entries:
     kubeVersion: '>=1.17.0-0'
     maintainers:
     - name: Kubernetes Authors
-      url: https://github.com/zghanem/volumescaler
+      url: https://github.com/aws-samples/sample-volumeScaler
     name: volumescaler
     sources:
-    - https://github.com/zghanem/volumescaler
+    - https://github.com/aws-samples/sample-volumeScaler
     type: application
     urls:
-    - https://github.com/zghanem0/AmazonVolumeScaler/releases/download/helm-chart-volumescaler-0.1.1/volumescaler-0.1.1.tgz
+    - https://github.com/aws-samples/sample-volumeScaler/releases/download/helm-chart-volumescaler-0.1.1/volumescaler-0.1.1.tgz
     version: 0.1.1
   - apiVersion: v2
     appVersion: 1.1.0
     created: "2025-02-22T02:09:11.17284Z"
     description: A Helm chart for Kubernetes
     digest: 5f22e951f000453a69d28ab9a7c4100d9522b483c96197396307e672b695b0b6
-    home: https://github.com/zghanem/volumescaler
+    home: https://github.com/aws-samples/sample-volumeScaler
     keywords:
     - aws
     - ebs
@@ -140,12 +140,12 @@ entries:
     kubeVersion: '>=1.17.0-0'
     maintainers:
     - name: Kubernetes Authors
-      url: https://github.com/zghanem/volumescaler
+      url: https://github.com/aws-samples/sample-volumeScaler
     name: volumescaler
     sources:
-    - https://github.com/zghanem/volumescaler
+    - https://github.com/aws-samples/sample-volumeScaler
     type: application
     urls:
-    - https://zghanem0.github.io/AmazonVolumeScaler/volumescaler-0.1.0.tgz
+    - https://github.com/aws-samples/sample-volumeScaler/releases/download/helm-chart-volumescaler-0.1.0/volumescaler-0.1.0.tgz
     version: 0.1.0
 generated: "2025-02-22T04:26:08.490032548Z"
