@@ -11,7 +11,7 @@ authors:
     orcid: 0009-0005-0012-4470
     affiliation: 1
 affiliations:
- - name: Department of Computer Science, Munster Technological University Cork
+ - name: Department of Computer Science, Munster Technological University Cork, Ireland
    index: 1
 date: 23 April 2024
 bibliography: paper.bib
@@ -28,16 +28,24 @@ The management of storage resources in Kubernetes clusters is a critical aspect 
 
 # Statement of need
 
-While Kubernetes provides comprehensive solutions for scaling compute resources through features like Horizontal Pod Autoscaling (HPA) [@HPA], the platform lacks native mechanisms for automatically scaling storage resources. This gap in functionality becomes particularly challenging in dynamic cloud environments where storage requirements can fluctuate significantly. Manual intervention for storage scaling operations introduces several challenges:
+The research in cloud-native storage management has gained significant attention as organizations increasingly adopt containerized architectures. While Kubernetes provides comprehensive solutions for scaling compute resources through features like Horizontal Pod Autoscaling (HPA) [@HPA], the platform lacks native mechanisms for automatically scaling storage resources. This gap in functionality presents an important research challenge in the field of cloud resource management.
+
+Recent studies in cloud storage optimization [@k8s_storage_2023] have highlighted several key challenges in storage resource management:
 
 1. Operational overhead: Administrators must manually monitor storage usage and perform scaling operations
 2. Resource inefficiency: Static storage allocation often leads to either over-provisioning (increasing costs) or under-provisioning (risking performance degradation)
 3. Response latency: Manual scaling operations cannot respond quickly to sudden changes in storage requirements
 
-`VolumeScaler` addresses these challenges by providing automated, policy-driven scaling of PersistentVolumeClaims. The controller continuously monitors storage usage patterns and automatically adjusts PVC sizes based on configurable thresholds and policies. This automation reduces operational overhead while ensuring optimal resource utilization. The implementation follows Kubernetes best practices [@k8s_controllers_2021] and integrates seamlessly with existing storage solutions through the Container Storage Interface [@csi_spec_2022].
+`VolumeScaler` addresses these research challenges by providing an automated, policy-driven approach to PVC scaling. The controller implements novel algorithms for:
+- Real-time storage usage pattern analysis
+- Dynamic threshold-based scaling decisions
+- Integration with multiple storage backends through CSI [@csi_spec_2022]
+
+This research contribution advances the field of cloud storage management by providing a practical solution to the storage scaling problem while maintaining compatibility with existing Kubernetes infrastructure. The implementation follows Kubernetes best practices [@k8s_controllers_2021] and serves as a reference architecture for future research in automated storage management.
 
 
 # Acknowledgements
 
 I would like to acknowledge the support and guidance from my supervisors and colleagues at Munster Technological University Cork. Special thanks to the Kubernetes community for their continuous development of the platform and its ecosystem.
 
+# References
