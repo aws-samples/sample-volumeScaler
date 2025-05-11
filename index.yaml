@@ -3,6 +3,27 @@ entries:
   volumescaler:
   - apiVersion: v2
     appVersion: v0.1.0
+    created: "2025-05-11T22:21:46.840040757Z"
+    description: A Helm chart for Kubernetes
+    digest: dbb64f0456bd5969afc8fb21fcf53296b369d7c769273718c0b40d59120e06df
+    home: https://github.com/aws-samples/sample-volumeScaler.git
+    keywords:
+    - aws
+    - ebs
+    - csi
+    kubeVersion: '>=1.17.0-0'
+    maintainers:
+    - name: Kubernetes Authors
+      url: https://github.com/aws-samples/sample-volumeScaler.git
+    name: volumescaler
+    sources:
+    - https://github.com/aws-samples/sample-volumeScaler.git
+    type: application
+    urls:
+    - https://github.com/aws-samples/sample-volumeScaler/releases/download/helm-chart-volumescaler-0.1.7/volumescaler-0.1.7.tgz
+    version: 0.1.7
+  - apiVersion: v2
+    appVersion: v0.1.0
     created: "2025-02-22T04:26:08.489971012Z"
     description: A Helm chart for Kubernetes
     digest: 8b3b3a4ec34e8d6b6290cfe016c627dfb140088b87f11d03a8c8cd392c86fcb4
@@ -148,4 +169,4 @@ entries:
     urls:
     - https://github.com/aws-samples/sample-volumeScaler/releases/download/helm-chart-volumescaler-0.1.0/volumescaler-0.1.0.tgz
     version: 0.1.0
-generated: "2025-02-22T04:26:08.490032548Z"
+generated: "2025-05-11T22:21:46.840069622Z"
