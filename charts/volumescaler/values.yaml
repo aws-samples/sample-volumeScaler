@@ -31,4 +31,4 @@ resources:
 pvcResizerEnv: []  # Additional environment variables if needed
 
 # 
-kubeletHostPath: /var/lib/kubelet
+kubeletHostPath: /var/lib/kubelet/pods
