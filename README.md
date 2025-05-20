@@ -10,6 +10,10 @@ When deploying volume in k8s we normally facing the following challenges.
 - Over-provisioning → wasted cost
 - keep watching it every few hours/days to take an actions.
 
+## How VolumeScaler works
+
+![How_it_works](How_it_works.png)
+
 ## Prerequisites
 
 - Kubernetes cluster with a storage provider that supports online volume expansion (e.g., EBS CSI driver)
@@ -88,7 +92,7 @@ spec:
   maxSize: "10Gi"
 ```
 
-
+You can check [this Demo](https://www.youtube.com/watch?v=kNfBlW0LXlU) for better understanding.
 
 ## Contributing
 
