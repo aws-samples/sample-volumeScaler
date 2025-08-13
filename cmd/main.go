@@ -100,6 +100,16 @@ type ControllerConfig struct {
 }
 
 // NewDefaultConfig returns a default controller configuration
+// NewDefaultConfig returns a default controller configuration with predefined values
+// suitable for most production environments.
+//
+// Default values:
+//   - KubeletPodsPath: "/var/lib/kubelet/pods" (standard kubelet path)
+//   - PollInterval: 60 seconds (reasonable balance between responsiveness and resource usage)
+//   - MaxRetries: 3 (sufficient for transient failures)
+//   - Timeout: 30 seconds (adequate for most Kubernetes API operations)
+//
+// Returns a configured ControllerConfig ready for use.
 func NewDefaultConfig() *ControllerConfig {
 	return &ControllerConfig{
 		KubeletPodsPath: defaultKubeletPodsPath,
@@ -116,6 +126,13 @@ func NewDefaultConfig() *ControllerConfig {
 // -------------------------------------
 // 2) convertToGi: converts "5Gi" / "512Mi" / "1Ti" into float64 Gi
 // -------------------------------------
+// convertToGi parses storage size strings and converts them to GiB units.
+// Supports common storage units: Mi (mebibytes), Gi (gibibytes), Ti (tebibytes).
+//
+// Parameters:
+//   - sizeStr: Storage size string (e.g., "5Gi", "512Mi", "1Ti")
+//
+// Returns the size in GiB as a float64, or an error if parsing fails.
 func convertToGi(sizeStr string) (float64, error) {
 	if sizeStr == "" {
 		return 0, fmt.Errorf("empty size string")
@@ -156,6 +173,14 @@ func convertToGi(sizeStr string) (float64, error) {
 // -------------------------------------
 // 3) inClusterOrKubeconfig: tries in-cluster config first, fallback to KUBECONFIG
 // -------------------------------------
+// inClusterOrKubeconfig attempts to create a Kubernetes client configuration
+// by first trying to use in-cluster configuration (when running inside a pod),
+// then falling back to the KUBECONFIG environment variable if available.
+//
+// This function enables the controller to work both when deployed as a DaemonSet
+// in a cluster and when running locally for development/testing.
+//
+// Returns a valid Kubernetes client configuration, or an error if both methods fail.
 func inClusterOrKubeconfig() (*rest.Config, error) {
 	kubeconfig := os.Getenv("KUBECONFIG")
 	if kubeconfig == "" {
@@ -176,6 +201,19 @@ func inClusterOrKubeconfig() (*rest.Config, error) {
 // ------------------------------------------------------
 // 4) getPVCUIDsFromLocalMounts: returns slice of PVC UIDs + map PVC UID -> mountPath
 // ------------------------------------------------------
+// getPVCUIDsFromLocalMounts discovers PVCs mounted on the current node by scanning
+// the kubelet pods directory for CSI volume mounts. This function is essential for
+// the DaemonSet architecture, as it allows each node to identify only the PVCs
+// that are relevant to that specific node.
+//
+// Parameters:
+//   - kubeletPodsPath: Path to the kubelet pods directory (typically "/var/lib/kubelet/pods")
+//   - clientset: Kubernetes client for additional validation if needed
+//
+// Returns:
+//   - Slice of PVC UIDs found on the current node
+//   - Map from PVC UID to its mount path
+//   - Error if the discovery process fails
 func getPVCUIDsFromLocalMounts(kubeletPodsPath string, clientset kubernetes.Interface) ([]types.UID, map[types.UID]string, error) {
 	pvcUIDSet := make(map[types.UID]struct{})
 	pvcUIDToMount := make(map[types.UID]string)
@@ -228,6 +266,20 @@ func getPVCUIDsFromLocalMounts(kubeletPodsPath string, clientset kubernetes.Inte
 // ---------------------------------------------
 // 5) measureUsage: runs "df" -> usage% and usedGi
 // ---------------------------------------------
+// measureUsage measures disk usage for a mounted volume by executing the "df" command
+// and calculating usage percentage and used space in GiB.
+//
+// This function provides the core metrics needed for scaling decisions by measuring
+// actual filesystem usage rather than relying on Kubernetes-reported capacity.
+//
+// Parameters:
+//   - mountPath: Filesystem path where the volume is mounted
+//   - specSizeGi: The current PVC specification size in GiB (for percentage calculation)
+//
+// Returns:
+//   - usagePercent: Current usage as a percentage (0-100)
+//   - usedGi: Used space in GiB
+//   - Error if measurement fails
 func measureUsage(mountPath string, specSizeGi float64) (int, int, error) {
 	if _, err := os.Stat(mountPath); os.IsNotExist(err) {
 		return -1, -1, fmt.Errorf("mount path '%s' not found", mountPath)
@@ -268,6 +320,17 @@ var measureUsageFunc = measureUsage
 // 6) checkAndHandleResizeFailedEvents:
 // Looks for warnings with reason="VolumeResizeFailed"
 // -------------------------------------------------------------
+// checkAndHandleResizeFailedEvents examines Kubernetes events to detect failed
+// volume resize operations for a specific PVC. This is important for error handling
+// and ensuring the controller can respond appropriately to failed scaling attempts.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - clientset: Kubernetes client for accessing events
+//   - pvcName: Name of the PVC to check for resize failures
+//   - pvcNamespace: Namespace of the PVC
+//
+// Returns the message from the most recent resize failure event, or empty string if none found.
 func checkAndHandleResizeFailedEvents(ctx context.Context, clientset kubernetes.Interface, pvcName, pvcNamespace string) string {
 	fieldSelector := fmt.Sprintf("involvedObject.kind=PersistentVolumeClaim,involvedObject.name=%s", pvcName)
 	evList, err := clientset.CoreV1().Events(pvcNamespace).List(ctx, metav1.ListOptions{FieldSelector: fieldSelector})
@@ -309,6 +372,13 @@ func makeInvolvedObjectRef(vsName types.NamespacedName, vsObj *VolumeScaler) *co
 // ------------------------------------------------------------
 // helper: parseCooldownDuration
 // ------------------------------------------------------------
+// parseCooldownDuration parses a cooldown duration string into a time.Duration.
+// Supports standard Go duration formats like "10m", "1h", "300s".
+//
+// Parameters:
+//   - cooldownStr: Duration string (e.g., "10m", "1h", "300s")
+//
+// Returns the parsed duration, or 0 if the string is empty.
 func parseCooldownDuration(cooldownStr string) (time.Duration, error) {
 	if cooldownStr == "" {
 		return 0, nil
@@ -319,6 +389,14 @@ func parseCooldownDuration(cooldownStr string) (time.Duration, error) {
 // ------------------------------------------------------------
 // helper: canScaleNow
 // ------------------------------------------------------------
+// canScaleNow determines if enough time has passed since the last scaling operation
+// to allow a new scaling operation, based on the configured cooldown period.
+//
+// Parameters:
+//   - lastScaledAtStr: RFC3339 timestamp string of the last scaling operation
+//   - cooldown: Minimum time that must pass between scaling operations
+//
+// Returns true if scaling is allowed, false if still in cooldown period.
 func canScaleNow(lastScaledAtStr string, cooldown time.Duration) (bool, error) {
 	if cooldown == 0 {
 		return true, nil
@@ -339,6 +417,19 @@ func canScaleNow(lastScaledAtStr string, cooldown time.Duration) (bool, error) {
 // ------------------------------------------------------------
 // helper: computeNewSize
 // ------------------------------------------------------------
+// computeNewSize calculates the new PVC size based on the current size and scaling policy.
+// Supports two scaling strategies: fixed size increments and percentage-based scaling.
+//
+// Parameters:
+//   - scale: The scaling amount (e.g., "2Gi" for fixed, "30%" for percentage)
+//   - scaleType: The scaling strategy ("fixed" or "percentage")
+//   - currentSizeGi: Current PVC size in GiB
+//
+// Returns the calculated new size in GiB, or an error if the calculation fails.
+//
+// Scaling strategies:
+//   - Fixed: Adds a specific amount (e.g., current 5Gi + 2Gi = 7Gi)
+//   - Percentage: Increases by a percentage of current size (e.g., current 5Gi + 30% = 6.5Gi)
 func computeNewSize(scale, scaleType string, currentSizeGi float64) (float64, error) {
 	switch scaleType {
 	case "fixed":
@@ -372,14 +463,31 @@ func computeNewSize(scale, scaleType string, currentSizeGi float64) (float64, er
 // ------------------------------------------------------------
 // 8) mainLoop
 // ------------------------------------------------------------
+// VolumeScalerController implements the core logic for automated PVC scaling.
+// It runs as a DaemonSet on each node, monitoring local PVC usage and
+// automatically scaling them based on configurable policies.
+//
+// The controller follows the Kubernetes Operator pattern and integrates
+// with the Kubernetes API to provide seamless PVC management.
 type VolumeScalerController struct {
-	config    *ControllerConfig
-	clientset kubernetes.Interface
-	dynClient dynamic.Interface
-	recorder  record.EventRecorder
-	gvr       schema.GroupVersionResource
+	config    *ControllerConfig           // Controller configuration and settings
+	clientset kubernetes.Interface        // Core Kubernetes API client
+	dynClient dynamic.Interface           // Dynamic client for custom resources
+	recorder  record.EventRecorder        // Event recorder for Kubernetes events
+	gvr       schema.GroupVersionResource // GroupVersionResource for VolumeScaler CRs
 }
 
+// NewVolumeScalerController creates a new instance of VolumeScalerController
+// with the specified configuration and Kubernetes clients.
+//
+// Parameters:
+//   - config: Controller configuration including polling intervals and paths
+//   - clientset: Kubernetes core API client for accessing PVCs and other resources
+//   - dynClient: Dynamic client for accessing VolumeScaler custom resources
+//   - recorder: Event recorder for logging controller actions
+//   - gvr: GroupVersionResource for the VolumeScaler custom resource
+//
+// Returns a configured VolumeScalerController ready to run.
 func NewVolumeScalerController(config *ControllerConfig, clientset kubernetes.Interface, dynClient dynamic.Interface, recorder record.EventRecorder, gvr schema.GroupVersionResource) *VolumeScalerController {
 	return &VolumeScalerController{
 		config:    config,
@@ -390,6 +498,20 @@ func NewVolumeScalerController(config *ControllerConfig, clientset kubernetes.In
 	}
 }
 
+// Run starts the main controller loop that continuously monitors and scales PVCs.
+// The controller runs until the context is cancelled or an unrecoverable error occurs.
+//
+// The main loop:
+// 1. Discovers PVCs mounted on the current node
+// 2. Fetches VolumeScaler configurations from the cluster
+// 3. Evaluates each PVC against its scaling policy
+// 4. Triggers scaling operations when thresholds are exceeded
+// 5. Waits for the configured polling interval before repeating
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//
+// Returns an error if the controller loop fails irrecoverably.
 func (c *VolumeScalerController) Run(ctx context.Context) error {
 	ticker := time.NewTicker(c.config.PollInterval)
 	defer ticker.Stop()
@@ -406,6 +528,20 @@ func (c *VolumeScalerController) Run(ctx context.Context) error {
 	}
 }
 
+// reconcileLoop performs one complete reconciliation cycle for all PVCs on the current node.
+// This is the core logic that discovers, evaluates, and scales PVCs based on their
+// associated VolumeScaler configurations.
+//
+// The reconciliation process:
+// 1. Discovers PVCs mounted on the current node
+// 2. Fetches all PVCs and VolumeScaler resources from the cluster
+// 3. For each local PVC with a VolumeScaler, evaluates scaling conditions
+// 4. Triggers scaling operations when thresholds are exceeded
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//
+// Returns an error if the reconciliation cycle fails completely.
 func (c *VolumeScalerController) reconcileLoop(ctx context.Context) error {
 	// (A) discover local PVCs on this node
 	pvcUIDs, pvcUIDToMount, err := getPVCUIDsFromLocalMounts(c.config.KubeletPodsPath, c.clientset)
@@ -479,6 +615,25 @@ func (c *VolumeScalerController) reconcileLoop(ctx context.Context) error {
 	return nil
 }
 
+// reconcilePVC evaluates a single PVC against its VolumeScaler configuration and
+// triggers scaling operations when thresholds are exceeded.
+//
+// This function implements the core scaling logic:
+// 1. Parses and validates the VolumeScaler configuration (threshold, maxSize, etc.)
+// 2. Measures current disk usage from the mounted volume
+// 3. Determines if scaling is needed based on usage thresholds
+// 4. Calculates the new size based on scaling policy (fixed or percentage)
+// 5. Initiates PVC expansion if conditions are met
+// 6. Updates VolumeScaler status and records events
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - pvc: The PersistentVolumeClaim to evaluate and potentially scale
+//   - vsObj: The VolumeScaler configuration that defines scaling behavior
+//   - vsName: Namespaced name of the VolumeScaler resource
+//   - mountPath: Filesystem path where the PVC is mounted (for usage measurement)
+//
+// Returns an error if the reconciliation fails, nil on success.
 func (c *VolumeScalerController) reconcilePVC(ctx context.Context, pvc *corev1.PersistentVolumeClaim, vsObj *VolumeScaler, vsName types.NamespacedName, mountPath string) error {
 	invRef := makeInvolvedObjectRef(vsName, vsObj)
 
