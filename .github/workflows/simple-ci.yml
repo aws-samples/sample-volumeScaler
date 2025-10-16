@@ -1,0 +1,59 @@
+name: VolumeScaler Simple CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-and-validate:
+    name: Test and Validate
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.23'
+
+    - name: Install dependencies
+      run: go mod download
+
+    - name: Run go vet
+      run: go vet ./...
+
+    - name: Check formatting
+      run: |
+        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          echo "The following files are not formatted:"
+          gofmt -s -l .
+          exit 1
+        fi
+
+    - name: Run unit tests
+      run: make test
+
+    - name: Generate test coverage
+      run: make coverage
+
+    - name: Validate Kubernetes manifests
+      run: |
+        kubectl --dry-run=client apply -f volumescaler.yaml || echo "Warning: volumescaler.yaml validation failed"
+        kubectl --dry-run=client apply -f StorageClass.yaml || echo "Warning: StorageClass.yaml validation failed"
+
+    - name: Validate Helm chart
+      run: |
+        helm lint charts/volumescaler/ || echo "Warning: Helm chart lint failed"
+        helm template volumescaler charts/volumescaler/ > /dev/null || echo "Warning: Helm template failed"
+
+    - name: Build binary
+      run: make build
+
+    - name: Verify binary
+      run: |
+        ls -la bin/volumescaler
+        file bin/volumescaler
