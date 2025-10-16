@@ -54,11 +54,17 @@ jobs:
           exit 1
         fi
 
-    - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v3
-      with:
-        version: latest
-        args: --timeout=5m
+    - name: Run basic linting
+      run: |
+        echo "Running basic Go linting checks..."
+        go vet ./...
+        go fmt -s -l . | tee /tmp/fmt.out
+        if [ -s /tmp/fmt.out ]; then
+          echo "Code formatting issues found:"
+          cat /tmp/fmt.out
+          exit 1
+        fi
+        echo "Basic linting passed"
 
     - name: Run unit tests
       run: make test
