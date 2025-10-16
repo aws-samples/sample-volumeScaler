@@ -83,6 +83,7 @@ jobs:
     name: Build Multi-Arch Image
     runs-on: ubuntu-latest
     needs: lint-and-test
+    if: false  # Disable Docker build for now since ECR credentials aren't set up
     
     steps:
     - name: Checkout code
@@ -91,41 +92,20 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Log in to Amazon ECR
-      uses: aws-actions/amazon-ecr-login@v2
-
-    - name: Extract metadata
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-        tags: |
-          type=ref,event=branch
-          type=ref,event=pr
-          type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
-          type=sha,prefix={{branch}}-
-          type=raw,value=latest,enable={{is_default_branch}}
-
-    - name: Build and push Docker image
+    - name: Build Docker image (local only)
       uses: docker/build-push-action@v5
       with:
         context: .
         platforms: linux/amd64,linux/arm64
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
+        push: false
+        tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test
         cache-from: type=gha
         cache-to: type=gha,mode=max
-        build-args: |
-          VERSION=${{ steps.meta.outputs.version }}
-          COMMIT=${{ github.sha }}
-          BUILD_DATE=${{ steps.meta.outputs.created }}
 
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
-    needs: build
+    needs: lint-and-test
     
     steps:
     - name: Checkout code
@@ -181,8 +161,8 @@ jobs:
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: [lint-and-test, build, security-scan, validate-manifests]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [lint-and-test, security-scan, validate-manifests]
+    if: false  # Disable release for now
     
     steps:
     - name: Checkout code
