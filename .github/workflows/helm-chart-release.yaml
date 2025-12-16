@@ -44,3 +44,4 @@ jobs:
         with:
           config: .github/cr.yaml
           mark_as_latest: false
+          skip_existing: true
