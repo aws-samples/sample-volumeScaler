@@ -9,6 +9,10 @@ on:
       - '.github/workflows/release-chart.yaml'
       - 'cr.yaml'
 
+permissions:
+  contents: write
+  pages: write
+
 jobs:
   release:
     runs-on: ubuntu-latest
