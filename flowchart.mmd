@@ -1,32 +1,34 @@
 flowchart TD
     A[Start VolumeScaler Operator]
-    B[Initialize Kubernetes Clients & Recorder]
+    B[Initialize Kubernetes Clients & Event Recorder]
     C[Load Kubernetes Configuration - inClusterOrKubeconfig]
-    D[Enter mainLoop]
-    
-    E[Discover Local PVC Mounts - getPVCUIDsFromLocalMounts]
-    F[List All Cluster PVCs]
-    G[List VolumeScaler CRs]
-    
-    H[For Each PVC with an Associated VolumeScaler]
-    I[Parse VolumeScaler Spec Fields - Threshold, Scale, MaxSize]
-    J[Convert PVC and CR Sizes to GiB]
-    K[Measure Disk Usage via df - measureUsage]
-    
-    L{Has PVC reached Max Size?}
-    M{Is a Resize Operation In Progress?}
-    N{Resize Completed?}
-    O{Usage exceeds Threshold?}
-    
-    P[Calculate New Size using Current Size and Scale Percentage]
-    Q[Cap New Size at Maximum Allowed Size if Needed]
-    R[Patch PVC Spec to Request New Size]
-    S[Update VolumeScaler Status with resizeInProgress, scaledAt, lastRequestedSize, and reachedMaxSize]
-    
-    T[Emit Events for Each Significant Action or Error]
-    U[Sleep for 60 Seconds]
-    V[Repeat mainLoop]
-    
+    D[Enter reconcileLoop]
+
+    E[Fetch PVC Usage from Kubelet /stats/summary API via Node Proxy]
+    F[List All VolumeScaler CRs]
+    G[Match PVCs with VolumeScaler CRs]
+
+    H[For Each Matched PVC]
+    I[Parse VolumeScaler Spec - Threshold, Scale, ScaleType, MaxSize, CooldownPeriod]
+    J[Recalculate Usage % Against PVC Spec Size]
+    K[Cap Display Values - Usage at 100%, Used at Spec Size]
+    L[Patch VolumeScaler Status with Current Usage]
+
+    M{Has PVC Reached Max Size?}
+    N{Is a Resize In Progress?}
+    O{Resize Completed?}
+    P{In Cooldown Period?}
+    Q{Usage >= Threshold?}
+
+    R[Compute New Size - Fixed or Percentage]
+    S[Cap New Size at MaxSize if Needed]
+    T[Patch PVC Spec to Request New Size]
+    U[Update VolumeScaler Status - resizeInProgress, scaledAt, lastRequestedSize, reachedMaxSize]
+
+    V[Emit Events for Each Significant Action or Error]
+    W[Sleep for 60 Seconds]
+    X[Repeat reconcileLoop]
+
     %% Flow connections
     A --> B
     B --> C
@@ -39,19 +41,23 @@ flowchart TD
     I --> J
     J --> K
     K --> L
-    
-    L -- Yes --> T
-    L -- No --> M
-    M -- Yes --> N
-    N -- Completed --> S
-    N -- Still in progress --> T
-    M -- No --> O
-    O -- Usage High --> P
-    P --> Q
-    Q --> R
-    R --> T
-    O -- Usage low --> T
-    
+    L --> M
+
+    M -- Yes --> V
+    M -- No --> N
+    N -- Yes --> O
+    O -- Completed --> U
+    O -- Still In Progress --> V
+    N -- No --> Q
+    Q -- Yes --> P
+    P -- In Cooldown --> V
+    P -- OK to Scale --> R
+    R --> S
+    S --> T
     T --> U
     U --> V
-    V --> D
+    Q -- No --> V
+
+    V --> W
+    W --> X
+    X --> D
