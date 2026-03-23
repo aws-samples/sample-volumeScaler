@@ -17,9 +17,11 @@ When deploying volume in k8s we normally facing the following challenges.
 
 ## Prerequisites
 
-- Kubernetes cluster with a storage provider that supports online volume expansion (e.g., EBS CSI driver)
-- A StorageClass that enables volume expansion
-- RBAC permissions allowing the VolumeScaler DaemonSet to list pods, PVCs, and VolumeScaler CRs, and patch their status
+- Kubernetes 1.17+ (EKS, GKE, AKS, k3s, Minikube, KIND, etc.)
+- A StorageClass with `allowVolumeExpansion: true`
+- A CSI driver that supports online volume expansion (e.g., EBS CSI, GCE PD CSI, Ceph CSI, or the CSI hostpath driver for local testing)
+
+> **Note:** VolumeScaler reads PVC usage via the standard kubelet `/stats/summary` API. It does not require privileged mode, host path mounts, or any specific storage backend. It works on any Kubernetes cluster where the kubelet reports volume statistics.
 
 ## Installation
 
@@ -37,6 +39,153 @@ When deploying volume in k8s we normally facing the following challenges.
   helm repo update                                                                 
   helm upgrade --install volumescaler sample-volumeScaler/volumescaler 
   ```
+
+## Deploying on k3s
+
+k3s ships with a `local-path` StorageClass that does not support volume expansion. To test VolumeScaler on k3s, you can either use it as-is (the controller will detect usage and attempt expansion, but the PVC patch will be rejected) or install a CSI driver that supports expansion.
+
+```bash
+# Install k3s
+curl -sfL https://get.k3s.io | sh -
+
+# Pull the VolumeScaler image
+sudo k3s ctr images pull public.ecr.aws/ghanem/volumescaler:v0.2.0
+
+# Deploy VolumeScaler
+sudo k3s kubectl apply -f volumescaler.yaml
+
+# Verify the DaemonSet is running
+sudo k3s kubectl get ds volumescaler-daemonset
+sudo k3s kubectl get pods -l app=volumescaler
+
+# Create a test PVC and VolumeScaler CR
+cat <<EOF | sudo k3s kubectl apply -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-pvc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: local-path
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: data-gen
+spec:
+  containers:
+    - name: data-gen
+      image: busybox
+      command: ["sh", "-c", "sleep 3600"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: test-pvc
+---
+apiVersion: autoscaling.storage.k8s.io/v1alpha1
+kind: VolumeScaler
+metadata:
+  name: test-vs
+spec:
+  pvcName: test-pvc
+  threshold: "50%"
+  scale: "50%"
+  scaleType: VolumeScaler
+  cooldownPeriod: "1m"
+  maxSize: 3Gi
+EOF
+
+# Write data to trigger threshold detection
+sudo k3s kubectl exec data-gen -- dd if=/dev/zero of=/data/fill bs=1M count=600
+
+# After ~60s, check usage status
+sudo k3s kubectl get vs test-vs
+```
+
+> **Note:** The `local-path` StorageClass does not support volume expansion, so the PVC patch will fail with a "forbidden" error. This is expected — the controller correctly detects usage and attempts expansion. To test full end-to-end expansion on k3s, install a CSI driver that supports online expansion.
+
+## Deploying on Minikube
+
+Minikube's default `standard` StorageClass uses a hostpath provisioner that does not report PVC volume stats to the kubelet. To get proper volume metrics, enable the CSI hostpath driver addon.
+
+```bash
+# Start minikube
+minikube start --driver=docker
+
+# Enable the CSI hostpath driver addon
+minikube addons enable csi-hostpath-driver
+
+# Patch the CSI StorageClass to allow volume expansion
+kubectl patch sc csi-hostpath-sc -p '{"allowVolumeExpansion": true}'
+
+# Deploy VolumeScaler
+kubectl apply -f volumescaler.yaml
+
+# Verify the DaemonSet is running
+kubectl get ds volumescaler-daemonset
+kubectl get pods -l app=volumescaler
+
+# Create a test PVC (using csi-hostpath-sc) and VolumeScaler CR
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-pvc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: csi-hostpath-sc
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: data-gen
+spec:
+  containers:
+    - name: data-gen
+      image: busybox
+      command: ["sh", "-c", "sleep 3600"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: test-pvc
+---
+apiVersion: autoscaling.storage.k8s.io/v1alpha1
+kind: VolumeScaler
+metadata:
+  name: test-vs
+spec:
+  pvcName: test-pvc
+  threshold: "50%"
+  scale: "50%"
+  scaleType: VolumeScaler
+  cooldownPeriod: "1m"
+  maxSize: 3Gi
+EOF
+
+# Write data to trigger threshold
+kubectl exec data-gen -- dd if=/dev/zero of=/data/fill bs=1M count=600
+
+# After ~60s, check usage and scaling status
+kubectl get vs test-vs
+```
+
+> **Note:** The CSI hostpath driver shares the host filesystem across all PVCs, so the usage percentage reported by `kubectl get vs` may appear inflated (e.g., >100%). This is a known limitation of hostpath-based storage — each PVC does not get an isolated block device. On production CSI drivers (EBS, GCE PD, Azure Disk, Ceph RBD), usage numbers are accurate per-volume. The full expansion flow (1Gi → 2Gi → 3Gi → reachedMaxSize) works correctly on minikube with the CSI hostpath driver.
+
+## Deploying on KIND
+
+KIND (Kubernetes IN Docker) uses a hostpath provisioner similar to minikube. The same approach applies — install a CSI driver that supports volume expansion and reports PVC stats. Alternatively, you can use the [CSI hostpath driver](https://github.com/kubernetes-csi/csi-driver-host-path) deployed manually.
 
 ## Testing
  **Deploy pod-data-generator for testing**:
@@ -62,7 +211,18 @@ it is just all about predictable and unpredictable workload
 
 ### 2. Monitoring Utilization
 
-The DaemonSet runs on every node, listing pods running on that node. For each pod volume that references a PVC, it checks the disk usage using. The usage is compared against the threshold from the matching VolumeScaler resource.
+The DaemonSet runs on every node, querying the kubelet `/stats/summary` API for PVC usage metrics. For each PVC-backed volume on the node, the kubelet reports `usedBytes`, `capacityBytes`, and `availableBytes`. The controller recalculates usage percentage against the PVC spec size and compares it against the threshold from the matching VolumeScaler resource.
+
+You can view current utilization directly:
+
+```bash
+kubectl get vs
+```
+
+```
+NAME         PVC NAME      USAGE%   USED    SIZE   THRESHOLD   MAX SIZE   REACHED MAX
+example-vs   example-pvc   67       3.2Gi   5Gi    70%         10Gi       false
+```
 
 ### 3. Scaling PVC
 
