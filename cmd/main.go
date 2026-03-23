@@ -537,9 +537,20 @@ func (c *VolumeScalerController) reconcilePVC(ctx context.Context, pvc *corev1.P
 	}
 
 	// 4b) Always update current usage in VolumeScaler status so users can see it via kubectl
+	// Cap display values so they make sense to users. Some CSI drivers (e.g., hostpath)
+	// report host-level usage which can exceed the PVC spec size. We cap the display
+	// but keep raw values for threshold comparison so real CSI drivers still work correctly.
+	displayUsagePercent := usagePercent
+	if displayUsagePercent > 100 {
+		displayUsagePercent = 100
+	}
+	displayUsedGi := usageInfo.UsedGi
+	if specSizeGi > 0 && displayUsedGi > specSizeGi {
+		displayUsedGi = specSizeGi
+	}
 	usagePatch := []byte(fmt.Sprintf(
 		`{"status":{"currentUsagePercent":%d,"currentUsedGi":"%.1fGi","currentSizeGi":"%.0fGi"}}`,
-		usagePercent, usageInfo.UsedGi, specSizeGi))
+		displayUsagePercent, displayUsedGi, specSizeGi))
 	_, err = c.dynClient.Resource(c.gvr).Namespace(vsName.Namespace).
 		Patch(ctx, vsName.Name, types.MergePatchType, usagePatch, metav1.PatchOptions{}, "status")
 	if err != nil {

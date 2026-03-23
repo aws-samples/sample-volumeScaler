@@ -36,10 +36,14 @@ spec:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
         resources:
-          {{- toYaml .Values.resources | nindent 8 }}
+          {{- toYaml .Values.resources | nindent 10 }}
       dnsPolicy: ClusterFirst
       nodeSelector:
         {{- toYaml .Values.daemonset.nodeSelector | nindent 8 }}
+      {{- if .Values.daemonset.affinity }}
+      affinity:
+        {{- toYaml .Values.daemonset.affinity | nindent 8 }}
+      {{- end }}
       tolerations:
         {{- toYaml .Values.daemonset.tolerations | nindent 8 }}
       restartPolicy: Always

@@ -13,8 +13,19 @@ daemonset:
   name: volumescaler-daemonset
   namespace: default
   labels: {}
-  nodeSelector: {}
-  tolerations: []
+  nodeSelector:
+    kubernetes.io/os: linux
+  tolerations:
+    - operator: Exists
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: eks.amazonaws.com/compute-type
+            operator: NotIn
+            values:
+            - fargate
   priorityClassName: system-node-critical
 
 sidecars: []  # Additional sidecars if needed
