@@ -183,10 +183,6 @@ kubectl get vs test-vs
 
 > **Note:** The CSI hostpath driver shares the host filesystem across all PVCs, so the raw usage reported by the kubelet may exceed the PVC size. VolumeScaler caps the displayed values at 100% usage and the PVC spec size so that `kubectl get vs` always shows sensible numbers. On production CSI drivers (EBS, GCE PD, Azure Disk, Ceph RBD), usage numbers are accurate per-volume. The full expansion flow (1Gi → 2Gi → 3Gi → reachedMaxSize) works correctly on minikube with the CSI hostpath driver.
 
-## Deploying on KIND
-
-KIND (Kubernetes IN Docker) uses a hostpath provisioner similar to minikube. The same approach applies — install a CSI driver that supports volume expansion and reports PVC stats. Alternatively, you can use the [CSI hostpath driver](https://github.com/kubernetes-csi/csi-driver-host-path) deployed manually.
-
 ## Testing
  **Deploy pod-data-generator for testing**:
 
