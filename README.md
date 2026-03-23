@@ -181,7 +181,7 @@ kubectl exec data-gen -- dd if=/dev/zero of=/data/fill bs=1M count=600
 kubectl get vs test-vs
 ```
 
-> **Note:** The CSI hostpath driver shares the host filesystem across all PVCs, so the usage percentage reported by `kubectl get vs` may appear inflated (e.g., >100%). This is a known limitation of hostpath-based storage — each PVC does not get an isolated block device. On production CSI drivers (EBS, GCE PD, Azure Disk, Ceph RBD), usage numbers are accurate per-volume. The full expansion flow (1Gi → 2Gi → 3Gi → reachedMaxSize) works correctly on minikube with the CSI hostpath driver.
+> **Note:** The CSI hostpath driver shares the host filesystem across all PVCs, so the raw usage reported by the kubelet may exceed the PVC size. VolumeScaler caps the displayed values at 100% usage and the PVC spec size so that `kubectl get vs` always shows sensible numbers. On production CSI drivers (EBS, GCE PD, Azure Disk, Ceph RBD), usage numbers are accurate per-volume. The full expansion flow (1Gi → 2Gi → 3Gi → reachedMaxSize) works correctly on minikube with the CSI hostpath driver.
 
 ## Deploying on KIND
 
