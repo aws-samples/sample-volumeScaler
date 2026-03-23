@@ -33,20 +33,10 @@ spec:
           {{- toYaml .Values.pvcResizerEnv | nindent 10 }}
           {{- end }}
         securityContext:
-          privileged: true
-          readOnlyRootFilesystem: false
-          allowPrivilegeEscalation: true
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
         resources:
           {{- toYaml .Values.resources | nindent 8 }}
-        volumeMounts:
-        - name: kubelet
-          mountPath: /var/lib/kubelet
-          mountPropagation: Bidirectional
-      volumes:
-      - name: kubelet
-        hostPath:
-          path: {{ .Values.kubeletHostPath }}
-          type: Directory
       dnsPolicy: ClusterFirst
       nodeSelector:
         {{- toYaml .Values.daemonset.nodeSelector | nindent 8 }}

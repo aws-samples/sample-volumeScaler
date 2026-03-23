@@ -29,6 +29,3 @@ resources:
     memory: 128Mi
 
 pvcResizerEnv: []  # Additional environment variables if needed
-
-# 
-kubeletHostPath: /var/lib/kubelet/pods

@@ -107,6 +107,9 @@ rules:
   - apiGroups: [""]  # Core API group
     resources: ["pods", "persistentvolumeclaims", "persistentvolumes", "events"]
     verbs: ["get", "list", "watch", "patch", "create"]
+  - apiGroups: [""]  # Node proxy for kubelet stats/summary API
+    resources: ["nodes/proxy"]
+    verbs: ["get"]
   - # Updated to new group
     apiGroups: ["autoscaling.storage.k8s.io"]  
     resources: ["volumescalers", "volumescalers/status"]
@@ -145,8 +148,7 @@ spec:
       serviceAccountName: pvc-resizer
       containers:
         - name: pvc-resizer
-          # Example referencing a semantic version, e.g. v0.1.0
-          image: public.ecr.aws/ghanem/volumescaler:v0.1.0
+          image: public.ecr.aws/ghanem/volumescaler:v0.2.0
           imagePullPolicy: Always
           env:
             - name: NODE_NAME_ENV
@@ -154,21 +156,20 @@ spec:
                 fieldRef:
                   fieldPath: spec.nodeName
           securityContext:
-            privileged: true
-            readOnlyRootFilesystem: false
-            allowPrivilegeEscalation: true
-          volumeMounts:
-            - name: kubelet
-              mountPath: /var/lib/kubelet/pods
-              mountPropagation: Bidirectional
-      volumes:
-        - name: kubelet
-          hostPath:
-            path: /var/lib/kubelet/pods
-            type: Directory
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
       dnsPolicy: ClusterFirst
       nodeSelector:
         kubernetes.io/os: linux
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: eks.amazonaws.com/compute-type
+                operator: NotIn
+                values:
+                - fargate
       tolerations:
         - operator: Exists
       restartPolicy: Always
