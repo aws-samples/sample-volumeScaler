@@ -64,8 +64,8 @@ func TestReconcilePVC(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "test-vs", Namespace: "default"},
 				Spec:       VolumeScalerSpec{PVCName: "test-pvc", Threshold: "70%", Scale: "2Gi", ScaleType: "fixed", CooldownPeriod: "5m", MaxSize: "10Gi"},
 			},
-			vsName:    types.NamespacedName{Namespace: "default", Name: "test-vs"},
-			usageInfo: &PVCUsageInfo{UsedBytes: 4 * 1024 * 1024 * 1024, CapacityBytes: 5 * 1024 * 1024 * 1024, AvailableBytes: 1 * 1024 * 1024 * 1024, UsagePercent: 80, UsedGi: 4.0},
+			vsName:       types.NamespacedName{Namespace: "default", Name: "test-vs"},
+			usageInfo:    &PVCUsageInfo{UsedBytes: 4 * 1024 * 1024 * 1024, CapacityBytes: 5 * 1024 * 1024 * 1024, AvailableBytes: 1 * 1024 * 1024 * 1024, UsagePercent: 80, UsedGi: 4.0},
 			expectResize: true,
 		},
 		{

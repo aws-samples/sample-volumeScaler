@@ -7,7 +7,7 @@
 # ---------------------------------------------------------------------------
 
 # The default semantic version for your release
-VERSION ?= v0.1.0
+VERSION ?= v0.2.0
 
 # Go package import path; update to match your actual module
 PKG_PATH = github.com/aws-samples/sample-volumeScaler

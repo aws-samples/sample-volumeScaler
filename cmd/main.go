@@ -53,10 +53,13 @@ type VolumeScalerSpec struct {
 
 // VolumeScalerStatus defines the observed state of VolumeScaler
 type VolumeScalerStatus struct {
-	ScaledAt          string `json:"scaledAt,omitempty"`
-	ReachedMaxSize    bool   `json:"reachedMaxSize,omitempty"`
-	ResizeInProgress  bool   `json:"resizeInProgress,omitempty"`
-	LastRequestedSize string `json:"lastRequestedSize,omitempty"`
+	ScaledAt            string `json:"scaledAt,omitempty"`
+	ReachedMaxSize      bool   `json:"reachedMaxSize,omitempty"`
+	ResizeInProgress    bool   `json:"resizeInProgress,omitempty"`
+	LastRequestedSize   string `json:"lastRequestedSize,omitempty"`
+	CurrentUsagePercent int    `json:"currentUsagePercent,omitempty"`
+	CurrentUsedGi       string `json:"currentUsedGi,omitempty"`
+	CurrentSizeGi       string `json:"currentSizeGi,omitempty"`
 }
 
 // VolumeScaler is the Schema for the volumescalers API
@@ -117,8 +120,8 @@ type StatsSummary struct {
 
 // PodStats holds per-pod statistics from the kubelet stats summary.
 type PodStats struct {
-	PodRef          PodReference   `json:"podRef"`
-	VolumeStats     []VolumeStats  `json:"volume,omitempty"`
+	PodRef           PodReference  `json:"podRef"`
+	VolumeStats      []VolumeStats `json:"volume,omitempty"`
 	EphemeralStorage *FsStats      `json:"ephemeral-storage,omitempty"`
 }
 
@@ -130,8 +133,8 @@ type PodReference struct {
 
 // VolumeStats holds per-volume statistics.
 type VolumeStats struct {
-	Name   string          `json:"name"`
-	PVCRef *PVCReference   `json:"pvcRef,omitempty"`
+	Name   string        `json:"name"`
+	PVCRef *PVCReference `json:"pvcRef,omitempty"`
 	FsStats
 }
 
@@ -533,6 +536,16 @@ func (c *VolumeScalerController) reconcilePVC(ctx context.Context, pvc *corev1.P
 		usagePercent = int((usageInfo.UsedGi / specSizeGi) * 100)
 	}
 
+	// 4b) Always update current usage in VolumeScaler status so users can see it via kubectl
+	usagePatch := []byte(fmt.Sprintf(
+		`{"status":{"currentUsagePercent":%d,"currentUsedGi":"%.1fGi","currentSizeGi":"%.0fGi"}}`,
+		usagePercent, usageInfo.UsedGi, specSizeGi))
+	_, err = c.dynClient.Resource(c.gvr).Namespace(vsName.Namespace).
+		Patch(ctx, vsName.Name, types.MergePatchType, usagePatch, metav1.PatchOptions{}, "status")
+	if err != nil {
+		fmt.Printf("[WARN] failed to patch usage status for '%s/%s': %v\n", vsName.Namespace, vsName.Name, err)
+	}
+
 	// 5) is a resize in progress?
 	inProgress := statusSizeGi < specSizeGi
 
@@ -724,5 +737,3 @@ func main() {
 		os.Exit(1)
 	}
 }
-
-

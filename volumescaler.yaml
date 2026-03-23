@@ -67,27 +67,36 @@ spec:
                   type: boolean
                 lastRequestedSize:
                   type: string
+                currentUsagePercent:
+                  type: integer
+                  description: Current disk usage percentage.
+                currentUsedGi:
+                  type: string
+                  description: Current used space (e.g., "3.2Gi").
+                currentSizeGi:
+                  type: string
+                  description: Current PVC spec size (e.g., "5Gi").
 
       additionalPrinterColumns:
         - name: PVC Name
           type: string
           jsonPath: .spec.pvcName
+        - name: Usage%
+          type: integer
+          jsonPath: .status.currentUsagePercent
+        - name: Used
+          type: string
+          jsonPath: .status.currentUsedGi
+        - name: Size
+          type: string
+          jsonPath: .status.currentSizeGi
         - name: Threshold
           type: string
           jsonPath: .spec.threshold
-        - name: Scale
-          type: string
-          jsonPath: .spec.scale
-        - name: ScaleType
-          type: string
-          jsonPath: .spec.scaleType
         - name: Max Size
           type: string
           jsonPath: .spec.maxSize
-        - name: Scaled At
-          type: string
-          jsonPath: .status.scaledAt
-        - name: Reached Max Size
+        - name: Reached Max
           type: boolean
           jsonPath: .status.reachedMaxSize
       subresources:
