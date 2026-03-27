@@ -121,6 +121,8 @@ To evaluate the effectiveness of VolumeScaler, we conducted a comprehensive 30-d
 
 ## Testing Environment
 
+The complete datasets and the analysis code used to produce all figures in this section are available in the [`paper/data`](data/) directory of the repository.
+
 The evaluation simulated a realistic production scenario where persistent volume usage starts at 100 GiB and increases by 2 GiB per day over a 30-day period, reaching approximately 158 GiB by day 30. Two distinct scaling approaches were compared:
 
 **Manual Scaling:** Operators manually resize PVCs with overprovisioning set at 150% of current usage (equivalent to a three-day growth forecast). This approach resulted in 8 failure events over the 30-day period, yielding a Mean Time Between Failures (MTBF) of 90 hours and Mean Time To Recovery (MTTR) ranging between 2-4 hours.
