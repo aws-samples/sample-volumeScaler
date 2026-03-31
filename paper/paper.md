@@ -39,6 +39,7 @@ The challenge of automated storage scaling in Kubernetes represents a significan
 **Kubernetes Native Capabilities**: Kubernetes supports online volume expansion through the `allowVolumeExpansion` feature in StorageClasses [@KubernetesResourceManagement], but this capability is limited to manual operations and requires explicit administrator intervention. The platform lacks built-in automation for triggering expansions based on usage patterns.
 
 **Existing Tools Focus on Different Problems**: 
+
 - **Velero** [@velero_2022] provides backup and restore functionality but offers no storage scaling capabilities
 - **STORK** [@stork_docs] enhances storage orchestration and scheduling but does not address dynamic scaling
 - **External CSI drivers** support volume expansion but require manual PVC patching to trigger size increases
@@ -79,6 +80,7 @@ The current landscape reveals a critical gap: **there exists no standardized, pr
 **Universal Compatibility**: Unlike research prototypes restricted to specific workload types, `VolumeScaler` works with **any PVC regardless of workload type** (Deployments, DaemonSets, StatefulSets, or standalone Pods).
 
 **CSI Driver Agnostic**: By design, `VolumeScaler` works with **any Kubernetes provider that uses CSI drivers**. This includes:
+
 - AWS EBS CSI Driver
 - Azure Disk CSI Driver  
 - Google Cloud PD CSI Driver
@@ -86,12 +88,14 @@ The current landscape reveals a critical gap: **there exists no standardized, pr
 - Any other CSI-compliant storage driver
 
 **Production-Ready Implementation**: Unlike research prototypes, `VolumeScaler` is built as a production-grade Kubernetes controller with:
+
 - Comprehensive error handling and recovery
 - Event recording and status management
 - Safe PVC patching operations (no resource deletion/recreation)
 - Integration with Kubernetes RBAC and security models
 
 **Standardized Approach**: Unlike custom scripts, `VolumeScaler` provides a consistent, declarative interface through Kubernetes Custom Resource Definitions (CRDs), ensuring:
+
 - Portability across different environments
 - Integration with existing Kubernetes tooling
 - Consistent behavior and predictable outcomes
@@ -101,7 +105,7 @@ This approach fills the critical gap in the Kubernetes ecosystem by providing th
 
 # Statement of need
 
-The research in cloud-native storage management has gained significant attention as organizations increasingly adopt containerized architectures. While Kubernetes provides comprehensive solutions for scaling compute resources through features like Horizontal Pod Autoscaling (HPA) [@HPA], the platform lacks native mechanisms for automatically scaling storage resources. This gap in functionality presents an important research challenge in the field of cloud resource management.
+Research in cloud-native storage management has gained significant attention as organizations increasingly adopt containerized architectures. While Kubernetes provides comprehensive solutions for scaling compute resources through features like Horizontal Pod Autoscaling (HPA) [@HPA], the platform lacks native mechanisms for automatically scaling storage resources. This gap in functionality presents an important research challenge in the field of cloud resource management.
 
 Recent studies in cloud storage optimization [@k8s_storage_2023] have highlighted several key challenges in storage resource management:
 
@@ -110,6 +114,7 @@ Recent studies in cloud storage optimization [@k8s_storage_2023] have highlighte
 3. Response latency: Manual scaling operations cannot respond quickly to sudden changes in storage requirements
 
 `VolumeScaler` addresses these research challenges by providing an automated, policy-driven approach to PVC scaling. The controller implements novel algorithms for:
+
 - Real-time storage usage pattern analysis
 - Dynamic threshold-based scaling decisions
 - Integration with multiple storage backends through CSI [@csi_spec_2022]
