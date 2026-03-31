@@ -187,6 +187,6 @@ These results demonstrate that VolumeScaler effectively addresses the key challe
 
 # Acknowledgements
 
-I would like to acknowledge the support and guidance from my supervisors and colleagues at Munster Technological University Cork. Special thanks to the Kubernetes community for their continuous development of the platform and its ecosystem.
+We would like to acknowledge the support and guidance from our supervisors and colleagues at Munster Technological University Cork. Special thanks to the Kubernetes community for their continuous development of the platform and its ecosystem.
 
 # References
