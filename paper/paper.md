@@ -9,10 +9,10 @@ tags:
 authors:
   - name: Ahmed Ghanem
     orcid: 0009-0005-0012-4470
-    affiliation: 1
-  - name: Ruairi O'Reilly
+    affiliation: "1"
+  - name: "Ruairi O'Reilly"
     orcid: 0000-0001-7990-3461
-    affiliation: 2
+    affiliation: "2"
 affiliations:
  - name: Department of Computer Science, Munster Technological University Cork, Ireland
    index: 1
