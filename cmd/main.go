@@ -7,19 +7,30 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/dynamicinformer"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/leaderelection"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/workqueue"
 )
 
 const (
@@ -27,6 +38,15 @@ const (
 	defaultPollInterval = 60 * time.Second
 	defaultMaxRetries   = 3
 	defaultTimeout      = 30 * time.Second
+	defaultResyncPeriod = 10 * time.Minute
+	defaultWorkers      = 2
+
+	// Leader election defaults
+	defaultLeaseLockName      = "volumescaler-controller"
+	defaultLeaseLockNamespace = "kube-system"
+	defaultLeaseDuration      = 15 * time.Second
+	defaultRenewDeadline      = 10 * time.Second
+	defaultRetryPeriod        = 2 * time.Second
 
 	// Event reasons
 	eventReasonResizeFailed    = "ResizeFailed"
@@ -97,6 +117,8 @@ type ControllerConfig struct {
 	PollInterval time.Duration
 	MaxRetries   int
 	Timeout      time.Duration
+	ResyncPeriod time.Duration
+	Workers      int
 }
 
 // NewDefaultConfig returns a default controller configuration with predefined values
@@ -106,6 +128,8 @@ func NewDefaultConfig() *ControllerConfig {
 		PollInterval: defaultPollInterval,
 		MaxRetries:   defaultMaxRetries,
 		Timeout:      defaultTimeout,
+		ResyncPeriod: defaultResyncPeriod,
+		Workers:      defaultWorkers,
 	}
 }
 
@@ -224,13 +248,8 @@ func inClusterOrKubeconfig() (*rest.Config, error) {
 // fetchNodePVCUsage queries the kubelet /stats/summary API via the Kubernetes
 // API proxy and returns a map of "namespace/pvcName" -> PVCUsageInfo for all
 // PVC-backed volumes on the given node.
-//
-// This approach is portable across all Kubernetes environments (EKS, GKE, KIND,
-// Minikube, etc.) because it uses the standard Kubernetes API rather than
-// relying on host-level filesystem paths or running shell commands like "df".
 // -----------------------------------------------------------------------------
 func fetchNodePVCUsage(ctx context.Context, clientset kubernetes.Interface, nodeName string) (map[string]*PVCUsageInfo, error) {
-	// Call the kubelet stats/summary API via the Kubernetes API server proxy
 	req := clientset.CoreV1().RESTClient().Get().
 		Resource("nodes").
 		Name(nodeName).
@@ -386,29 +405,194 @@ func computeNewSize(scale, scaleType string, currentSizeGi float64) (float64, er
 // -----------------------------------------------------------------------------
 
 // VolumeScalerController implements the core logic for automated PVC scaling.
-// It runs as a DaemonSet on each node, querying the kubelet stats/summary API
-// for PVC usage metrics and automatically scaling PVCs based on configurable policies.
+//
+// Architecture:
+//   - Watches VolumeScaler CRs and PVCs via shared informers and reconciles
+//     immediately on object events using a workqueue.
+//   - Polls kubelet /stats/summary for each Ready node on a periodic ticker
+//     since PVC usage is metric data and does not generate watch events.
+//   - When run with leader election as a Deployment, only the elected leader
+//     drives reconciliation. The DaemonSet shape is no longer required because
+//     stats/summary is reachable through the API server proxy from anywhere.
 type VolumeScalerController struct {
 	config    *ControllerConfig
 	clientset kubernetes.Interface
 	dynClient dynamic.Interface
 	recorder  record.EventRecorder
 	gvr       schema.GroupVersionResource
+
+	// Informer-backed caches and queue (optional; nil in legacy/test paths)
+	informerFactory    informers.SharedInformerFactory
+	dynInformerFactory dynamicinformer.DynamicSharedInformerFactory
+	pvcLister          corev1listers.PersistentVolumeClaimLister
+	nodeLister         corev1listers.NodeLister
+	vsInformer         cache.SharedIndexInformer
+	queue              workqueue.RateLimitingInterface
+
+	// usageMu guards usageCache.
+	usageMu    sync.RWMutex
+	usageCache map[string]*PVCUsageInfo
 }
 
 // NewVolumeScalerController creates a new instance of VolumeScalerController.
+//
+// The returned controller has no informers wired up; callers that want the
+// hybrid watch+poll behaviour should call Setup before Run.
 func NewVolumeScalerController(config *ControllerConfig, clientset kubernetes.Interface, dynClient dynamic.Interface, recorder record.EventRecorder, gvr schema.GroupVersionResource) *VolumeScalerController {
 	return &VolumeScalerController{
-		config:    config,
-		clientset: clientset,
-		dynClient: dynClient,
-		recorder:  recorder,
-		gvr:       gvr,
+		config:     config,
+		clientset:  clientset,
+		dynClient:  dynClient,
+		recorder:   recorder,
+		gvr:        gvr,
+		usageCache: make(map[string]*PVCUsageInfo),
 	}
 }
 
-// Run starts the main controller loop that continuously monitors and scales PVCs.
+// Setup wires up shared informers, listers, and the workqueue.
+// Call once before Run. Safe to skip in tests; the legacy reconcileLoop path
+// remains functional in that case.
+func (c *VolumeScalerController) Setup() {
+	c.informerFactory = informers.NewSharedInformerFactory(c.clientset, c.config.ResyncPeriod)
+	c.dynInformerFactory = dynamicinformer.NewDynamicSharedInformerFactory(c.dynClient, c.config.ResyncPeriod)
+
+	pvcInformer := c.informerFactory.Core().V1().PersistentVolumeClaims()
+	c.pvcLister = pvcInformer.Lister()
+
+	nodeInformer := c.informerFactory.Core().V1().Nodes()
+	c.nodeLister = nodeInformer.Lister()
+
+	c.vsInformer = c.dynInformerFactory.ForResource(c.gvr).Informer()
+
+	c.queue = workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "volumescaler")
+
+	// Enqueue VolumeScaler events keyed by namespace/name of the CR.
+	c.vsInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) { c.enqueueVS(obj) },
+		UpdateFunc: func(_, newObj interface{}) {
+			c.enqueueVS(newObj)
+		},
+		DeleteFunc: func(obj interface{}) { c.enqueueVS(obj) },
+	})
+
+	// Enqueue PVC events by mapping back to the VolumeScaler that targets the PVC.
+	pvcInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) { c.enqueueForPVC(obj) },
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			oldPVC, okOld := oldObj.(*corev1.PersistentVolumeClaim)
+			newPVC, okNew := newObj.(*corev1.PersistentVolumeClaim)
+			if okOld && okNew {
+				// Only act on changes that matter: spec resize requests and capacity transitions.
+				if oldPVC.ResourceVersion == newPVC.ResourceVersion {
+					return
+				}
+			}
+			c.enqueueForPVC(newObj)
+		},
+		DeleteFunc: func(obj interface{}) { c.enqueueForPVC(obj) },
+	})
+}
+
+// enqueueVS enqueues a VolumeScaler unstructured object by its namespace/name key.
+func (c *VolumeScalerController) enqueueVS(obj interface{}) {
+	if c.queue == nil {
+		return
+	}
+	key, err := cache.MetaNamespaceKeyFunc(obj)
+	if err != nil {
+		fmt.Printf("[ERROR] computing key for VolumeScaler: %v\n", err)
+		return
+	}
+	c.queue.Add(key)
+}
+
+// enqueueForPVC finds VolumeScalers that target the given PVC and enqueues them.
+func (c *VolumeScalerController) enqueueForPVC(obj interface{}) {
+	if c.queue == nil || c.vsInformer == nil {
+		return
+	}
+	pvc, ok := obj.(*corev1.PersistentVolumeClaim)
+	if !ok {
+		// Tombstone case
+		tombstone, isTomb := obj.(cache.DeletedFinalStateUnknown)
+		if !isTomb {
+			return
+		}
+		pvc, ok = tombstone.Obj.(*corev1.PersistentVolumeClaim)
+		if !ok {
+			return
+		}
+	}
+	for _, item := range c.vsInformer.GetStore().List() {
+		vsObj, vsName, err := unstructuredToVolumeScaler(item)
+		if err != nil {
+			continue
+		}
+		if vsName.Namespace == pvc.Namespace && vsObj.Spec.PVCName == pvc.Name {
+			c.queue.Add(vsName.Namespace + "/" + vsName.Name)
+		}
+	}
+}
+
+// unstructuredToVolumeScaler converts a cache item into a typed VolumeScaler and its NamespacedName.
+func unstructuredToVolumeScaler(obj interface{}) (*VolumeScaler, types.NamespacedName, error) {
+	u, ok := obj.(*unstructured.Unstructured)
+	if !ok {
+		return nil, types.NamespacedName{}, fmt.Errorf("object is not *unstructured.Unstructured: %T", obj)
+	}
+	vsObj := &VolumeScaler{}
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.UnstructuredContent(), vsObj); err != nil {
+		return nil, types.NamespacedName{}, fmt.Errorf("converting VolumeScaler: %v", err)
+	}
+	return vsObj, types.NamespacedName{Namespace: u.GetNamespace(), Name: u.GetName()}, nil
+}
+
+// Run starts the controller. When informers have been wired via Setup, it runs
+// the hybrid model:
+//   - shared informers populate caches and feed the workqueue
+//   - workers process keys (event-driven reconciliation for CR/PVC changes)
+//   - a periodic ticker refreshes kubelet usage and re-enqueues every CR
+//
+// Without Setup it falls back to the legacy ticker-only reconcile loop, which
+// keeps existing tests working.
 func (c *VolumeScalerController) Run(ctx context.Context) error {
+	if c.queue == nil {
+		// Legacy path: ticker-only reconciliation, scoped to the local node.
+		ticker := time.NewTicker(c.config.PollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-ticker.C:
+				if err := c.reconcileLoop(ctx); err != nil {
+					fmt.Printf("[ERROR] reconcile loop failed: %v\n", err)
+				}
+			}
+		}
+	}
+
+	defer c.queue.ShutDown()
+
+	c.informerFactory.Start(ctx.Done())
+	c.dynInformerFactory.Start(ctx.Done())
+
+	if !cache.WaitForCacheSync(ctx.Done(),
+		c.vsInformer.HasSynced,
+		c.informerFactory.Core().V1().PersistentVolumeClaims().Informer().HasSynced,
+		c.informerFactory.Core().V1().Nodes().Informer().HasSynced,
+	) {
+		return fmt.Errorf("failed to wait for caches to sync")
+	}
+
+	// Workers consume the workqueue.
+	for i := 0; i < c.config.Workers; i++ {
+		go wait.UntilWithContext(ctx, c.runWorker, time.Second)
+	}
+
+	// Initial usage refresh and CR enqueue so we reconcile right after election.
+	c.refreshUsageAndEnqueueAll(ctx)
+
 	ticker := time.NewTicker(c.config.PollInterval)
 	defer ticker.Stop()
 
@@ -417,23 +601,146 @@ func (c *VolumeScalerController) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := c.reconcileLoop(ctx); err != nil {
-				fmt.Printf("[ERROR] reconcile loop failed: %v\n", err)
-			}
+			c.refreshUsageAndEnqueueAll(ctx)
 		}
 	}
 }
 
-// reconcileLoop performs one complete reconciliation cycle.
-// It fetches PVC usage from the kubelet stats/summary API on this node,
-// then evaluates each PVC against its VolumeScaler configuration.
+// runWorker pulls a key from the queue and processes it.
+func (c *VolumeScalerController) runWorker(ctx context.Context) {
+	for c.processNextItem(ctx) {
+	}
+}
+
+func (c *VolumeScalerController) processNextItem(ctx context.Context) bool {
+	key, shutdown := c.queue.Get()
+	if shutdown {
+		return false
+	}
+	defer c.queue.Done(key)
+
+	if err := c.reconcileKey(ctx, key.(string)); err != nil {
+		fmt.Printf("[ERROR] reconciling '%s': %v\n", key, err)
+		c.queue.AddRateLimited(key)
+		return true
+	}
+	c.queue.Forget(key)
+	return true
+}
+
+// reconcileKey fetches the VolumeScaler and its target PVC from informer caches
+// and dispatches to reconcilePVC using the latest usage snapshot.
+func (c *VolumeScalerController) reconcileKey(ctx context.Context, key string) error {
+	ns, name, err := cache.SplitMetaNamespaceKey(key)
+	if err != nil {
+		return fmt.Errorf("invalid key '%s': %v", key, err)
+	}
+
+	item, exists, err := c.vsInformer.GetStore().GetByKey(key)
+	if err != nil {
+		return fmt.Errorf("looking up VolumeScaler '%s': %v", key, err)
+	}
+	if !exists {
+		return nil
+	}
+
+	vsObj, vsName, err := unstructuredToVolumeScaler(item)
+	if err != nil {
+		return err
+	}
+	vsName.Namespace, vsName.Name = ns, name
+
+	pvc, err := c.pvcLister.PersistentVolumeClaims(ns).Get(vsObj.Spec.PVCName)
+	if err != nil {
+		// PVC may not exist yet; silently skip until next event/tick.
+		return nil
+	}
+
+	usage := c.lookupUsage(ns, vsObj.Spec.PVCName)
+	if usage == nil {
+		// No usage data yet; status will be patched on next ticker iteration.
+		return nil
+	}
+
+	return c.reconcilePVC(ctx, pvc, vsObj, vsName, usage)
+}
+
+// lookupUsage returns a copy of the cached usage entry for a PVC.
+func (c *VolumeScalerController) lookupUsage(namespace, pvcName string) *PVCUsageInfo {
+	c.usageMu.RLock()
+	defer c.usageMu.RUnlock()
+	if c.usageCache == nil {
+		return nil
+	}
+	if v, ok := c.usageCache[namespace+"/"+pvcName]; ok {
+		cp := *v
+		return &cp
+	}
+	return nil
+}
+
+// refreshUsageAndEnqueueAll polls each Ready node's kubelet stats/summary,
+// merges results into the usage cache, then enqueues every known VolumeScaler
+// so reconcileKey can act on the freshest data.
+func (c *VolumeScalerController) refreshUsageAndEnqueueAll(ctx context.Context) {
+	merged := make(map[string]*PVCUsageInfo)
+
+	nodes, err := c.nodeLister.List(labels.Everything())
+	if err != nil {
+		fmt.Printf("[ERROR] listing nodes: %v\n", err)
+	}
+
+	for _, n := range nodes {
+		if !isNodeReady(n) {
+			continue
+		}
+		nctx, cancel := context.WithTimeout(ctx, c.config.Timeout)
+		usage, err := fetchNodePVCUsageFunc(nctx, c.clientset, n.Name)
+		cancel()
+		if err != nil {
+			fmt.Printf("[WARN] stats/summary for node '%s': %v\n", n.Name, err)
+			continue
+		}
+		for k, v := range usage {
+			merged[k] = v
+		}
+	}
+
+	c.usageMu.Lock()
+	c.usageCache = merged
+	c.usageMu.Unlock()
+
+	if c.vsInformer == nil || c.queue == nil {
+		return
+	}
+	for _, item := range c.vsInformer.GetStore().List() {
+		key, err := cache.MetaNamespaceKeyFunc(item)
+		if err != nil {
+			continue
+		}
+		c.queue.Add(key)
+	}
+}
+
+func isNodeReady(n *corev1.Node) bool {
+	for _, cond := range n.Status.Conditions {
+		if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+// reconcileLoop performs one complete reconciliation cycle in the legacy
+// per-node path. It is preserved for compatibility with existing tests and
+// for environments where the controller is run without informers/leader
+// election (for example, the original DaemonSet deployment).
 func (c *VolumeScalerController) reconcileLoop(ctx context.Context) error {
 	nodeName := os.Getenv("NODE_NAME_ENV")
 	if nodeName == "" {
 		return fmt.Errorf("NODE_NAME_ENV environment variable is not set")
 	}
 
-	// (A) Fetch PVC usage from the kubelet stats/summary API
 	pvcUsageMap, err := fetchNodePVCUsageFunc(ctx, c.clientset, nodeName)
 	if err != nil {
 		return fmt.Errorf("fetching PVC usage from node '%s': %v", nodeName, err)
@@ -444,7 +751,6 @@ func (c *VolumeScalerController) reconcileLoop(ctx context.Context) error {
 		return nil
 	}
 
-	// (B) List all VolumeScalers
 	vsList, err := c.dynClient.Resource(c.gvr).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("listing VolumeScalers: %v", err)
@@ -469,14 +775,12 @@ func (c *VolumeScalerController) reconcileLoop(ctx context.Context) error {
 		}
 	}
 
-	// (C) For each PVC with usage data and a VolumeScaler, reconcile
 	for pvcKey, usageInfo := range pvcUsageMap {
 		vsObj, hasScaler := vsMap[pvcKey]
 		if !hasScaler {
 			continue
 		}
 
-		// Fetch the actual PVC object
 		parts := strings.SplitN(pvcKey, "/", 2)
 		if len(parts) != 2 {
 			continue
@@ -499,10 +803,6 @@ func (c *VolumeScalerController) reconcileLoop(ctx context.Context) error {
 
 // reconcilePVC evaluates a single PVC against its VolumeScaler configuration and
 // triggers scaling operations when thresholds are exceeded.
-//
-// Instead of relying on host-level mount paths and the "df" command, this function
-// receives pre-computed usage information from the kubelet stats/summary API,
-// making it portable across all Kubernetes environments.
 func (c *VolumeScalerController) reconcilePVC(ctx context.Context, pvc *corev1.PersistentVolumeClaim, vsObj *VolumeScaler, vsName types.NamespacedName, usageInfo *PVCUsageInfo) error {
 	invRef := makeInvolvedObjectRef(vsName, vsObj)
 
@@ -526,20 +826,14 @@ func (c *VolumeScalerController) reconcilePVC(ctx context.Context, pvc *corev1.P
 	specSizeGi, _ := convertToGi(pvc.Spec.Resources.Requests.Storage().String())
 	statusSizeGi, _ := convertToGi(pvc.Status.Capacity.Storage().String())
 
-	// 4) usage from kubelet stats/summary API
-	// Recalculate usage percentage against the PVC spec size (what the user requested)
-	// rather than the filesystem capacity reported by the kubelet, since the underlying
-	// storage provider may allocate more than requested (e.g., EBS minimum volume size).
+	// 4) usage from kubelet stats/summary API, recalculated against the spec size.
 	usedGi := int(usageInfo.UsedGi + 0.5)
 	usagePercent := usageInfo.UsagePercent
 	if specSizeGi > 0 {
 		usagePercent = int((usageInfo.UsedGi / specSizeGi) * 100)
 	}
 
-	// 4b) Always update current usage in VolumeScaler status so users can see it via kubectl
-	// Cap display values so they make sense to users. Some CSI drivers (e.g., hostpath)
-	// report host-level usage which can exceed the PVC spec size. We cap the display
-	// but keep raw values for threshold comparison so real CSI drivers still work correctly.
+	// 4b) Always update current usage in VolumeScaler status so users can see it via kubectl.
 	displayUsagePercent := usagePercent
 	if displayUsagePercent > 100 {
 		displayUsagePercent = 100
@@ -624,7 +918,6 @@ func (c *VolumeScalerController) reconcilePVC(ctx context.Context, pvc *corev1.P
 			return nil
 		}
 
-		// compute new size
 		newSizeGi, err := computeNewSize(vsObj.Spec.Scale, vsObj.Spec.ScaleType, specSizeGi)
 		if err != nil {
 			c.recorder.Eventf(invRef, corev1.EventTypeWarning, "ScaleParseError",
@@ -633,7 +926,6 @@ func (c *VolumeScalerController) reconcilePVC(ctx context.Context, pvc *corev1.P
 			return fmt.Errorf("computing new size: %v", err)
 		}
 
-		// If we can't scale up because we're at max size, mark as reached max size
 		if newSizeGi > maxSizeGi {
 			newSizeGi = maxSizeGi
 			if specSizeGi >= maxSizeGi {
@@ -697,29 +989,77 @@ func (c *VolumeScalerController) reconcilePVC(ctx context.Context, pvc *corev1.P
 	return nil
 }
 
+// envOr returns the value of env var key or fallback if unset.
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// runWithLeaderElection runs fn while holding the leader lease. If lost, it
+// returns so the process can exit and be restarted by the controller manager.
+func runWithLeaderElection(ctx context.Context, kubeClient kubernetes.Interface, leaseNS, leaseName, identity string, fn func(context.Context)) error {
+	lock := &resourcelock.LeaseLock{
+		LeaseMeta: metav1.ObjectMeta{
+			Name:      leaseName,
+			Namespace: leaseNS,
+		},
+		Client: kubeClient.CoordinationV1(),
+		LockConfig: resourcelock.ResourceLockConfig{
+			Identity: identity,
+		},
+	}
+
+	leCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	leaderelection.RunOrDie(leCtx, leaderelection.LeaderElectionConfig{
+		Lock:            lock,
+		ReleaseOnCancel: true,
+		LeaseDuration:   defaultLeaseDuration,
+		RenewDeadline:   defaultRenewDeadline,
+		RetryPeriod:     defaultRetryPeriod,
+		Callbacks: leaderelection.LeaderCallbacks{
+			OnStartedLeading: func(c context.Context) {
+				fn(c)
+			},
+			OnStoppedLeading: func() {
+				fmt.Printf("[INFO] lost leader lease '%s/%s'\n", leaseNS, leaseName)
+				cancel()
+			},
+			OnNewLeader: func(id string) {
+				if id != identity {
+					fmt.Printf("[INFO] new leader elected: %s\n", id)
+				}
+			},
+		},
+	})
+	return nil
+}
+
 // ------------------------------------------------------------
 // main
 // ------------------------------------------------------------
 func main() {
-	config, err := inClusterOrKubeconfig()
+	cfg, err := inClusterOrKubeconfig()
 	if err != nil {
 		fmt.Printf("[FATAL] Failed to get Kubernetes config: %v\n", err)
 		os.Exit(1)
 	}
 
-	clientset, err := kubernetes.NewForConfig(config)
+	clientset, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		fmt.Printf("[FATAL] Failed to create Kubernetes client: %v\n", err)
 		os.Exit(1)
 	}
 
-	dynClient, err := dynamic.NewForConfig(config)
+	dynClient, err := dynamic.NewForConfig(cfg)
 	if err != nil {
 		fmt.Printf("[FATAL] Failed to create dynamic client: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Setup event broadcaster
 	scheme := runtime.NewScheme()
 	broadcaster := record.NewBroadcaster()
 	broadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{
@@ -727,7 +1067,6 @@ func main() {
 	})
 	recorder := broadcaster.NewRecorder(scheme, corev1.EventSource{Component: "volumescaler-controller"})
 
-	// Updated GVR to use new group/version
 	gvr := schema.GroupVersionResource{
 		Group:    "autoscaling.storage.k8s.io",
 		Version:  "v1alpha1",
@@ -741,10 +1080,32 @@ func main() {
 		recorder,
 		gvr,
 	)
+	controller.Setup()
 
-	fmt.Println("Starting VolumeScaler operator...")
-	if err := controller.Run(context.Background()); err != nil {
-		fmt.Printf("[FATAL] Controller failed: %v\n", err)
+	rootCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	enableLE := strings.EqualFold(envOr("LEADER_ELECTION", "true"), "true")
+	if !enableLE {
+		fmt.Println("Starting VolumeScaler controller (leader election disabled)...")
+		if err := controller.Run(rootCtx); err != nil {
+			fmt.Printf("[FATAL] Controller failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	leaseNS := envOr("POD_NAMESPACE", defaultLeaseLockNamespace)
+	leaseName := envOr("LEASE_NAME", defaultLeaseLockName)
+	identity := envOr("POD_NAME", fmt.Sprintf("volumescaler-%d", time.Now().UnixNano()))
+
+	fmt.Printf("Starting VolumeScaler controller with leader election (lease=%s/%s, identity=%s)...\n", leaseNS, leaseName, identity)
+	if err := runWithLeaderElection(rootCtx, clientset, leaseNS, leaseName, identity, func(ctx context.Context) {
+		if err := controller.Run(ctx); err != nil {
+			fmt.Printf("[ERROR] Controller exited: %v\n", err)
+		}
+	}); err != nil {
+		fmt.Printf("[FATAL] leader election failed: %v\n", err)
 		os.Exit(1)
 	}
 }
