@@ -35,6 +35,10 @@ leaderElection:
   enabled: true
   leaseName: volumescaler-controller
 
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
 # Resources for container
 resources:
   limits:

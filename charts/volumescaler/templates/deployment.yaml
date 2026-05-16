@@ -44,6 +44,26 @@ spec:
           {{- if .Values.pvcResizerEnv }}
           {{- toYaml .Values.pvcResizerEnv | nindent 10 }}
           {{- end }}
+        ports:
+          - name: health
+            containerPort: 8081
+            protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          initialDelaySeconds: 10
+          periodSeconds: 20
+          timeoutSeconds: 3
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
         securityContext:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false

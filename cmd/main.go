@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -432,6 +436,10 @@ type VolumeScalerController struct {
 	// usageMu guards usageCache.
 	usageMu    sync.RWMutex
 	usageCache map[string]*PVCUsageInfo
+
+	// ready is set to 1 once informer caches have synced and the controller
+	// is actively reconciling. It powers the /readyz endpoint.
+	ready atomic.Bool
 }
 
 // NewVolumeScalerController creates a new instance of VolumeScalerController.
@@ -584,6 +592,9 @@ func (c *VolumeScalerController) Run(ctx context.Context) error {
 	) {
 		return fmt.Errorf("failed to wait for caches to sync")
 	}
+
+	c.ready.Store(true)
+	defer c.ready.Store(false)
 
 	// Workers consume the workqueue.
 	for i := 0; i < c.config.Workers; i++ {
@@ -989,6 +1000,13 @@ func (c *VolumeScalerController) reconcilePVC(ctx context.Context, pvc *corev1.P
 	return nil
 }
 
+// IsReady reports whether the controller has synced informers and is reconciling.
+// /readyz returns 200 only when this is true so the kubelet can hold traffic
+// (and rolling-update progress) until the controller is actually doing work.
+func (c *VolumeScalerController) IsReady() bool {
+	return c.ready.Load()
+}
+
 // envOr returns the value of env var key or fallback if unset.
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -1038,6 +1056,40 @@ func runWithLeaderElection(ctx context.Context, kubeClient kubernetes.Interface,
 	return nil
 }
 
+// startHealthServer starts an HTTP server exposing /healthz and /readyz.
+// It returns the *http.Server so main can shut it down on exit.
+//
+// /healthz: process is alive (always 200 once main is running).
+// /readyz:  controller has synced caches and is reconciling.
+func startHealthServer(addr string, c *VolumeScalerController) *http.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if c.IsReady() {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ready"))
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("not ready"))
+	})
+
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			fmt.Printf("[ERROR] health server: %v\n", err)
+		}
+	}()
+	return srv
+}
+
 // ------------------------------------------------------------
 // main
 // ------------------------------------------------------------
@@ -1065,6 +1117,7 @@ func main() {
 	broadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{
 		Interface: clientset.CoreV1().Events(""),
 	})
+	defer broadcaster.Shutdown()
 	recorder := broadcaster.NewRecorder(scheme, corev1.EventSource{Component: "volumescaler-controller"})
 
 	gvr := schema.GroupVersionResource{
@@ -1082,8 +1135,26 @@ func main() {
 	)
 	controller.Setup()
 
+	// Cancel rootCtx on SIGTERM/SIGINT so the controller, leader election,
+	// and informers all unwind cleanly within terminationGracePeriodSeconds.
 	rootCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		s := <-sigCh
+		fmt.Printf("[INFO] received signal %s, shutting down\n", s)
+		cancel()
+	}()
+
+	healthAddr := envOr("HEALTH_ADDR", ":8081")
+	healthSrv := startHealthServer(healthAddr, controller)
+	defer func() {
+		shutdownCtx, sc := context.WithTimeout(context.Background(), 5*time.Second)
+		defer sc()
+		_ = healthSrv.Shutdown(shutdownCtx)
+	}()
 
 	enableLE := strings.EqualFold(envOr("LEADER_ELECTION", "true"), "true")
 	if !enableLE {
