@@ -9,26 +9,35 @@ rbac:
   create: true
   serviceAccountName: pvc-resizer
 
-daemonset:
-  name: volumescaler-daemonset
-  namespace: default
+# The controller now runs as a single leader-elected Deployment instead of a
+# DaemonSet. Kubelet usage data is fetched via the API server proxy, so the
+# controller does not need to run on every node.
+deployment:
+  name: volumescaler-controller
+  namespace: kube-system
+  replicas: 2
   labels: {}
   nodeSelector:
     kubernetes.io/os: linux
-  tolerations:
-    - operator: Exists
+  tolerations: []
   affinity:
-    nodeAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        nodeSelectorTerms:
-        - matchExpressions:
-          - key: eks.amazonaws.com/compute-type
-            operator: NotIn
-            values:
-            - fargate
-  priorityClassName: system-node-critical
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app: volumescaler
+            topologyKey: kubernetes.io/hostname
+  priorityClassName: system-cluster-critical
 
-sidecars: []  # Additional sidecars if needed
+leaderElection:
+  enabled: true
+  leaseName: volumescaler-controller
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
 
 # Resources for container
 resources:

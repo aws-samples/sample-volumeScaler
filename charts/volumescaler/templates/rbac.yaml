@@ -3,7 +3,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ .Values.rbac.serviceAccountName }}
-  namespace: {{ .Values.daemonset.namespace }}
+  namespace: {{ .Values.deployment.namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -11,7 +11,7 @@ metadata:
   name: pvc-resizer-role
 rules:
   - apiGroups: [""]
-    resources: ["pods", "persistentvolumeclaims", "persistentvolumes", "events"]
+    resources: ["pods", "persistentvolumeclaims", "persistentvolumes", "events", "nodes"]
     verbs: ["get", "list", "watch", "patch", "create"]
   - apiGroups: [""]
     resources: ["nodes/proxy"]
@@ -30,9 +30,34 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: {{ .Values.rbac.serviceAccountName }}
-    namespace: {{ .Values.daemonset.namespace }}
+    namespace: {{ .Values.deployment.namespace }}
 roleRef:
   kind: ClusterRole
   name: pvc-resizer-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Leader-election lease lives in the deployment namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pvc-resizer-leader-election
+  namespace: {{ .Values.deployment.namespace }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pvc-resizer-leader-election
+  namespace: {{ .Values.deployment.namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.rbac.serviceAccountName }}
+    namespace: {{ .Values.deployment.namespace }}
+roleRef:
+  kind: Role
+  name: pvc-resizer-leader-election
   apiGroup: rbac.authorization.k8s.io
 {{- end }}
